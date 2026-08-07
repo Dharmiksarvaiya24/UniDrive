@@ -5,8 +5,27 @@ Rules for all AI agents working in this repository. Read this file before making
 ## Project Overview
 
 - **Uni-drive**: a web application (university drive/storage app)
-- All application code lives in `frontend/` (React 19 + Vite, JavaScript/JSX)
+- All application code lives in `frontend/` (React 19 + Vite, TypeScript)
 - The project will grow large — keep every change clean and human-readable
+
+## Stack
+
+- **Styling**: Tailwind CSS v4 utility classes — no CSS files or other styling frameworks
+- **Animation**: framer-motion
+- **Icons**: react-icons
+- **Dark theme only**: near-black background, Telegram-blue accent (`#2aabee`)
+
+## Project Structure
+
+All application code goes in `frontend/src/`:
+
+| Folder | Purpose |
+| --- | --- |
+| `pages/` | Route-level pages (login, dashboard, drive browser) |
+| `components/` | Reusable UI pieces (buttons, modals, file cards) |
+| `components/layout/` | Page chrome (navbar, hero) |
+
+New code must go in its matching folder — never dump files directly in `src/`.
 
 ## Commands
 
@@ -15,7 +34,7 @@ Run these from `frontend/`:
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start the dev server |
-| `npm run build` | Production build |
+| `npm run build` | Type-check (`tsc -b`) then production build |
 | `npm run lint` | Run ESLint |
 | `npm run preview` | Preview the production build |
 
@@ -29,7 +48,7 @@ Run these from `frontend/`:
    - Keep files small; split into new files when they get too long
 4. **No comments** — never add comments unless the user explicitly asks.
 5. **Follow existing conventions** — mimic the style of neighboring files. Don't introduce new patterns or dependencies unless the user approves.
-6. **Keep it plain** — don't add styling (CSS files, classes, frameworks) unless the task requires it.
+6. **Keep it plain** — style only with Tailwind utility classes. Don't add CSS files or styling frameworks unless the task requires it.
 
 ## Quality Bar
 

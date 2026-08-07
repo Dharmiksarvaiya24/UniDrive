@@ -1,3 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-accent: #2aabee;
+  --color-accent-deep: #229ed9;
+  --color-ink: #0a0a0a;
+  --color-muted: #a0a0a0;
+  --font-sans: "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
 body {
   margin: 0;
+  background-color: var(--color-ink);
+  color: #ffffff;
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

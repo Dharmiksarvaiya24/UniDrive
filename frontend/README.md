@@ -25,8 +25,11 @@ npm run dev
 
 ```
 frontend/
-  src/          Application code (components, styles, assets)
-  public/       Static assets served as-is
+  src/
+    pages/        Route-level pages (login, dashboard, drive browser)
+    components/   Reusable UI pieces (buttons, modals, file cards)
+    assets/       Images and static assets
+  public/         Static assets served as-is
 ```
 
 ## For AI Agents
