@@ -1,5 +1,4 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { FiArrowRight } from 'react-icons/fi'
 import HeroVisual from './HeroVisual'
 
 function Hero() {
@@ -13,24 +12,10 @@ function Hero() {
 
   return (
     <section className="relative flex min-h-screen flex-col items-center overflow-hidden px-6 pb-24 pt-36">
-      <motion.div
-        {...entrance(0.1, -14)}
-        className="flex items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-[13px] text-muted"
-      >
-        <motion.span
-          className="h-2 w-2 rounded-full bg-accent"
-          animate={
-            reduceMotion ? undefined : { scale: [1, 1.7, 1], opacity: [1, 0.5, 1] }
-          }
-          transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-        />
-        Multiple Google Accounts. One Workspace.
-        <FiArrowRight size={13} />
-      </motion.div>
 
       <motion.h1
         {...entrance(0.25)}
-        className="mt-7 max-w-4xl text-center text-4xl font-medium leading-[1.08] tracking-tight md:text-6xl lg:text-7xl"
+        className="mt-1 max-w-4xl text-center text-4xl font-medium leading-[1.08] tracking-tight md:text-6xl lg:text-7xl"
       >
         <span className="bg-gradient-to-b from-white to-[#b7d8ea] bg-clip-text text-transparent">
           Unite every Drive,
