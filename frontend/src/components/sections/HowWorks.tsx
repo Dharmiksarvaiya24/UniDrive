@@ -1,0 +1,140 @@
+import { motion, useReducedMotion } from 'framer-motion'
+import loginImg from '../../assets/login.png'
+import syncImg from '../../assets/sync.png'
+import homeImg from '../../assets/home.png'
+
+const cards = [
+  {
+    step: 'Step 1',
+    title: 'Connect',
+    desc: 'Link all your Google Drive accounts securely.',
+    img: loginImg,
+  },
+  {
+    step: 'Step 2',
+    title: 'Sync',
+    desc: 'Sync files across drives in real-time.',
+    img: syncImg,
+  },
+  {
+    step: 'Step 3',
+    title: 'Browse',
+    desc: 'Search and browse all your files in one place.',
+    img: homeImg,
+  },
+]
+
+function HowWorks() {
+  const reduceMotion = useReducedMotion()
+
+  return (
+    <section className="relative flex h-screen flex-col items-center justify-center bg-black px-6 py-0 overflow-hidden">
+      
+      {/* Background glow blooming behind the card deck */}
+      <div className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center" aria-hidden>
+        <motion.div
+          className="absolute h-[450px] w-[450px] md:h-[650px] md:w-[650px] rounded-full blur-[120px] md:blur-[180px]"
+          style={{
+            background:
+              'radial-gradient(circle, rgba(42,171,238,0.16) 0%, rgba(42,171,238,0.04) 40%, transparent 70%)',
+          }}
+          animate={reduceMotion ? {} : {
+            scale: [1, 1.06, 1],
+            opacity: [0.85, 1, 0.85],
+          }}
+          transition={{
+            duration: 6,
+            ease: 'easeInOut',
+            repeat: Infinity,
+          }}
+        />
+      </div>
+
+      {/* Background horizontal traveling lines */}
+      {!reduceMotion && (
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden>
+          {[10, 18, 26, 34, 42, 50, 58, 66, 74, 82, 90].map((rowPercent, index) => (
+            <motion.div
+              key={index}
+              style={{
+                position: 'absolute',
+                top: `${rowPercent}%`,
+                left: 0,
+                height: '2px',
+                width: '260px',
+                background: 'linear-gradient(90deg, transparent, #2AABEE, transparent)',
+                opacity: 0.65,
+              }}
+              animate={{ x: ['-260px', '100vw'] }}
+              transition={{
+                duration: 5 + (index % 4) * 1.5,
+                ease: 'linear',
+                repeat: Infinity,
+                delay: (index % 5) * 0.7,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Headline & Subtitle */}
+      <div className="relative z-10 text-center max-w-4xl flex flex-col items-center">
+        <motion.h2
+          initial={reduceMotion ? {} : { opacity: 0, y: 100 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-100px' }}
+          transition={{ duration: 1.2, delay: 0, ease: 'easeOut' }}
+          className="text-4xl font-semibold leading-[1.1] tracking-tight md:text-6xl text-white"
+        >
+          One workspace for
+          <br />
+          every Google account.
+        </motion.h2>
+        <motion.p
+          initial={reduceMotion ? {} : { opacity: 0, y: 100 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-100px' }}
+          transition={{ duration: 1.2, delay: 0.2, ease: 'easeOut' }}
+          className="mt-4 max-w-xl text-[16px] text-muted"
+        >
+          Connect, sync, and browse every Drive account from one clean interface.
+        </motion.p>
+      </div>
+
+      {/* Static 3-Card Row */}
+      <div className="mt-12 flex flex-col lg:flex-row items-center justify-center gap-8 lg:gap-14 relative z-10 w-full max-w-screen-2xl">
+        {cards.map((card, idx) => (
+          <motion.div
+            key={idx}
+            initial={reduceMotion ? {} : { opacity: 0, y: 160 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-50px' }}
+            transition={{ duration: 1.2, delay: 0.2 + idx * 0.15, ease: 'easeOut' }}
+            className="w-full max-w-[320px] lg:max-w-[360px] xl:max-w-[390px] h-[480px] lg:h-[620px] rounded-2xl border border-white/[0.12] bg-[#121212]/95 p-4 shadow-xl flex flex-col justify-between"
+          >
+            <div>
+              <span className="text-[10px] font-bold tracking-widest text-accent uppercase bg-accent/10 px-2 py-0.5 rounded-full">
+                {card.step}
+              </span>
+              <h3 className="text-lg font-semibold text-white mt-1.5">{card.title}</h3>
+              <p className="text-xs text-muted mt-0.5">{card.desc}</p>
+            </div>
+
+            {/* Screen preview container containing the actual image */}
+            <div className="relative flex-1 mt-3 rounded-xl overflow-hidden border border-white/[0.12] bg-neutral-950">
+              <img
+                src={card.img}
+                className="absolute inset-0 w-full h-full object-cover object-top rounded-xl"
+                alt={card.title}
+                loading="lazy"
+              />
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+    </section>
+  )
+}
+
+export default HowWorks

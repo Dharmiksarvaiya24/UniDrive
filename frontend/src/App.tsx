@@ -1,17 +1,21 @@
 import Navbar from './components/layout/Navbar'
 import Hero from './components/layout/Hero'
 import ShowcaseSection from './components/layout/ShowcaseSection'
+import HowWorks from './components/sections/HowWorks'
 
 function App() {
   return (
     <>
       <Navbar />
-      <main className="h-screen overflow-y-auto snap-y snap-mandatory scroll-smooth">
-        <div className="snap-start w-full">
+      <main>
+        <div>
           <Hero />
         </div>
-        <div className="snap-start w-full">
+        <div>
           <ShowcaseSection />
+        </div>
+        <div>
+          <HowWorks />
         </div>
       </main>
     </>

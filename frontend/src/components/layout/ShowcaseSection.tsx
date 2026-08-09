@@ -13,11 +13,11 @@ const integrations = [
 function ShowcaseSection() {
   const reduceMotion = useReducedMotion()
 
-  const scrollEntrance = (delay: number, y = 28) => ({
+  const scrollEntrance = (delay: number, y = 120) => ({
     initial: reduceMotion ? (false as const) : { opacity: 0, y },
     whileInView: { opacity: 1, y: 0 },
     viewport: { once: true, margin: '-80px' },
-    transition: { duration: 0.7, delay, ease: 'easeOut' as const },
+    transition: { duration: 1.2, delay, ease: 'easeOut' as const },
   })
 
   return (
@@ -161,7 +161,7 @@ function ShowcaseSection() {
 
         <div
           aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 h-40"
+          className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 hidden md:block h-40"
           style={{
             background:
               'linear-gradient(to top, var(--color-ink) 5%, transparent)',
