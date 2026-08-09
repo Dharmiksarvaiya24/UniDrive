@@ -1,14 +1,5 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { SiGoogledrive, SiDropbox, SiGooglecloud, SiIcloud, SiBox } from 'react-icons/si'
 import dashboardImg from '../../assets/product.jpg'
-
-const integrations = [
-  { name: 'Google Drive', Icon: SiGoogledrive },
-  { name: 'Dropbox', Icon: SiDropbox },
-  { name: 'Google Cloud', Icon: SiGooglecloud },
-  { name: 'iCloud', Icon: SiIcloud },
-  { name: 'Box', Icon: SiBox },
-]
 
 function ShowcaseSection() {
   const reduceMotion = useReducedMotion()
@@ -21,7 +12,7 @@ function ShowcaseSection() {
   })
 
   return (
-    <section className="relative flex min-h-screen flex-col items-center justify-start overflow-hidden px-6 pt-20 pb-0 md:pt-28 md:pb-0">
+    <section className="relative flex min-h-screen flex-col items-center justify-start overflow-hidden px-6 pt-16 pb-0 md:pt-24 md:pb-0">
 
 
       <motion.h2
@@ -46,22 +37,7 @@ function ShowcaseSection() {
 
 
 
-      <motion.div
-        {...scrollEntrance(0.3)}
-        className="relative z-10 mx-auto mt-16 flex max-w-4xl flex-wrap items-center justify-center gap-x-14 gap-y-6 md:mt-20 md:justify-between"
-      >
-        {integrations.map(({ name, Icon }) => (
-          <div
-            key={name}
-            className="flex items-center gap-2.5 text-white/25 select-none"
-          >
-            <Icon className="h-[18px] w-[18px] shrink-0" />
-            <span className="text-[15px] font-medium tracking-wide whitespace-nowrap">
-              {name}
-            </span>
-          </div>
-        ))}
-      </motion.div>
+
 
       <motion.div
         {...scrollEntrance(0.4)}

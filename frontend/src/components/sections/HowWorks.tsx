@@ -28,7 +28,7 @@ function HowWorks() {
   const reduceMotion = useReducedMotion()
 
   return (
-    <section className="relative flex h-screen flex-col items-center justify-center bg-black px-6 py-0 overflow-hidden">
+    <section className="relative flex min-h-screen lg:h-screen flex-col items-center justify-start bg-black px-6 pt-32 pb-24 lg:pt-48 lg:pb-0 overflow-hidden">
       
       {/* Background glow blooming behind the card deck */}
       <div className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center" aria-hidden>
@@ -102,7 +102,7 @@ function HowWorks() {
       </div>
 
       {/* Static 3-Card Row */}
-      <div className="mt-12 flex flex-col lg:flex-row items-center justify-center gap-8 lg:gap-14 relative z-10 w-full max-w-screen-2xl">
+      <div className="mt-20 lg:mt-24 flex flex-col lg:flex-row items-center justify-center gap-8 lg:gap-14 relative z-10 w-full max-w-screen-2xl">
         {cards.map((card, idx) => (
           <motion.div
             key={idx}
