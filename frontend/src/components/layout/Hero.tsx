@@ -28,10 +28,7 @@ function Hero() {
         {...entrance(0.35)}
         className="mx-auto mt-6 max-w-2xl text-center text-[17px] leading-relaxed text-muted"
       >
-        Seamlessly 📁 <strong className="font-semibold text-white">merge storage</strong>, 🔍{' '}
-        <strong className="font-semibold text-white">search across accounts</strong>, and 🔄{' '}
-        <strong className="font-semibold text-white">sync in real-time</strong> — all your
-        Google Drives in one place.
+        <strong className="font-semibold text-white">All your Google Drives in one place.</strong>
       </motion.p>
 
       <motion.div

@@ -12,7 +12,7 @@ function ShowcaseSection() {
   })
 
   return (
-    <section className="relative flex min-h-screen flex-col items-center justify-start overflow-hidden px-6 pt-16 pb-0 md:pt-24 md:pb-0">
+    <section className="relative flex min-h-screen flex-col items-center overflow-hidden px-6 pt-16 pb-0 md:pt-24 md:pb-0">
 
 
       <motion.h2
@@ -41,7 +41,7 @@ function ShowcaseSection() {
 
       <motion.div
         {...scrollEntrance(0.4)}
-        className="relative mx-auto mt-16 max-w-[1100px] md:mt-24"
+        className="relative mx-auto mt-auto w-full max-w-[1100px] pt-16 md:pt-24"
       >
         <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
           {!reduceMotion ? (
@@ -129,7 +129,7 @@ function ShowcaseSection() {
             <img
               src={dashboardImg}
               alt="UniDrive dashboard — unified file browser across multiple Google Drive accounts"
-              className="block w-full"
+              className="block w-full h-[300px] object-cover object-center lg:h-auto lg:object-contain"
               loading="lazy"
             />
           </div>
