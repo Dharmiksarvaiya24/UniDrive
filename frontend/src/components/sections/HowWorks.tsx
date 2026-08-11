@@ -140,13 +140,13 @@ function HowWorks() {
           style={{ scale: headingScale, opacity: headingOpacity, y: headingY, transformOrigin: 'top center' }}
           className="relative z-20 text-center max-w-4xl flex flex-col items-center px-6"
         >
-          <h2 className="text-4xl font-semibold leading-[1.1] tracking-tight md:text-5xl text-white">
-            One workspace for
+          <h2 className="text-4xl font-semibold leading-[1.1] tracking-tight md:text-5xl bg-gradient-to-b from-white to-[#b7d8ea] bg-clip-text text-transparent">
+            Connect Sync Browse,
             <br />
-            every Google account.
+            Every Google Account.
           </h2>
           <p className="mt-3 max-w-xl text-[15px] text-muted">
-            Connect, sync, and browse every Drive account from one clean interface.
+            Simple Three Stpes.
           </p>
         </motion.div>
 
@@ -177,9 +177,8 @@ function HowWorks() {
                   <div className="relative flex-1 mt-4 rounded-[1.5rem] overflow-hidden border border-white/[0.12] bg-neutral-950">
                     <img
                       src={card.img}
-                      className={`absolute inset-0 w-full h-full object-cover rounded-[1.5rem] ${
-                        idx === 2 ? 'object-center lg:object-top' : 'object-top'
-                      }`}
+                      className={`absolute inset-0 w-full h-full object-cover rounded-[1.5rem] ${idx === 2 ? 'object-center lg:object-top' : 'object-top'
+                        }`}
                       alt={card.alt}
                       loading="lazy"
                     />

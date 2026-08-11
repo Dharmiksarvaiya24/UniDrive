@@ -20,7 +20,7 @@ function ShowcaseSection() {
         className="relative z-10 mx-auto max-w-3xl text-center text-3xl font-semibold leading-[1.12] tracking-tight md:text-5xl lg:text-[3.5rem]"
       >
         <span className="bg-gradient-to-b from-white to-[#b7d8ea] bg-clip-text text-transparent">
-          Manage every Drive,
+          Manage every Data,
         </span>
         <br />
         <span className="bg-gradient-to-b from-white to-[#b7d8ea] bg-clip-text text-transparent">

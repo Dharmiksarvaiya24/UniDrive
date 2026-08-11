@@ -18,17 +18,17 @@ function Hero() {
         className="mt-1 max-w-4xl text-center text-4xl font-medium leading-[1.08] tracking-tight md:text-6xl lg:text-7xl"
       >
         <span className="bg-gradient-to-b from-white to-[#b7d8ea] bg-clip-text text-transparent">
-          Unite every Drive,
+          Everything You Store,
         </span>
         <br />
-        <span className="text-accent">one account at a time.</span>
+        <span className="text-accent">One Place to Find It.</span>
       </motion.h1>
 
       <motion.p
         {...entrance(0.35)}
         className="mx-auto mt-6 max-w-2xl text-center text-[17px] leading-relaxed text-muted"
       >
-        <strong className="font-semibold text-white">All your Google Drives in one place.</strong>
+        <h4 className="text-white">All your Google Drives in one place.</h4>
       </motion.p>
 
       <motion.div

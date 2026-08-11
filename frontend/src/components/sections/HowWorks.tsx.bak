@@ -7,13 +7,13 @@ const cards = [
   {
     step: 'Step 1',
     title: 'Connect',
-    desc: 'Link all your Google Drive accounts securely.',
+    desc: 'Link your Google Drive accounts.',
     img: loginImg,
   },
   {
     step: 'Step 2',
     title: 'Sync',
-    desc: 'Sync files across drives in real-time.',
+    desc: 'It Syncs files across drives in real-time.',
     img: syncImg,
   },
   {
