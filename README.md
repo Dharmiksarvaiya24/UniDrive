@@ -48,7 +48,7 @@ Juggling multiple Google accounts usually means switching tabs, remembering whic
 ## Tech stack
 
 - **Frontend:** React (Vite), TypeScript, Tailwind CSS, Framer Motion
-- **Backend:** (add your backend stack here, e.g. Node.js / FastAPI)
+- **Backend:** Node.js
 - **Auth:** Google OAuth
 - **Icons:** Tabler Icons / react-icons
 
