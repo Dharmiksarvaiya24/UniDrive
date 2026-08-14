@@ -1,33 +1,8 @@
-import Navbar from './components/layout/Navbar'
-import Hero from './components/layout/Hero'
-import ShowcaseSection from './components/layout/ShowcaseSection'
-import HowWorks from './components/sections/HowWorks'
-import IntegrationPlan from './components/sections/IntegrationPlan'
-import Footer from './components/layout/Footer'
+import { RouterProvider } from 'react-router-dom'
+import router from './router'
 
 function App() {
-  return (
-    <>
-      <Navbar />
-      <main>
-        <div>
-          <Hero />
-        </div>
-        <div id="showcase">
-          <ShowcaseSection />
-        </div>
-        <div id="how-works">
-          <HowWorks />
-        </div>
-        <div id="integrations">
-          <IntegrationPlan />
-        </div>
-      </main>
-      <div id="footer">
-        <Footer />
-      </div>
-    </>
-  )
+  return <RouterProvider router={router} />
 }
 
 export default App
