@@ -149,7 +149,7 @@ function Footer() {
             <div className="flex flex-col items-center gap-5 md:-translate-x-12">
               <img src={logo} alt="UniDrive" className="w-24 h-24 object-contain" />
               <span className="text-2xl font-bold tracking-widest text-white">
-                UNIDRIVE
+                UniDrive
               </span>
             </div>
           </div>

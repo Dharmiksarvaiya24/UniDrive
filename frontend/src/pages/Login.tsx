@@ -7,7 +7,7 @@ function Login() {
       <div className="w-full max-w-sm flex flex-col items-center gap-8">
         <Link to="/" className="flex flex-col items-center gap-3">
           <img src={logo} alt="UniDrive" className="h-14 w-14 object-contain" />
-          <span className="text-2xl font-bold tracking-widest text-white">UNIDRIVE</span>
+          <span className="text-2xl font-bold tracking-widest text-white">UniDrive </span>
         </Link>
 
         <div className="w-full flex flex-col gap-4">
