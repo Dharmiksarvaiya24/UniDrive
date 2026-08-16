@@ -1,4 +1,5 @@
 import { motion, useReducedMotion } from 'framer-motion'
+import { Link } from 'react-router-dom'
 import HeroVisual from './HeroVisual'
 
 function Hero() {
@@ -35,34 +36,16 @@ function Hero() {
         {...entrance(0.45)}
         className="mt-10 flex flex-wrap items-center justify-center gap-4"
       >
-        <div className="relative flex cursor-not-allowed items-center gap-2 overflow-hidden rounded-full border border-white/10 px-7 py-3 text-[15px] text-white/40">
-          <motion.span
-            className="h-2 w-2 rounded-full bg-accent"
-            animate={
-              reduceMotion
-                ? undefined
-                : { scale: [1, 1.7, 1], opacity: [1, 0.5, 1] }
-            }
-            transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-          />
-          <span className="relative z-10">Coming Soon</span>
-          {!reduceMotion && (
-            <motion.div
-              aria-hidden
-              className="absolute inset-y-0 left-0 w-[200%] pointer-events-none"
-              style={{
-                background:
-                  'linear-gradient(120deg, transparent 25%, rgba(42,171,238,0.07) 50%, transparent 75%)',
-              }}
-              animate={{ x: ['-100%', '100%'] }}
-              transition={{
-                duration: 3.5,
-                ease: 'easeInOut',
-                repeat: Infinity,
-                repeatDelay: 1,
-              }}
-            />
-          )}
+        <div className="relative group">
+          {/* Glowing backdrop */}
+          <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-[#2AABEE] to-[#b7d8ea] opacity-40 blur-md transition-all duration-300 group-hover:opacity-75 animate-pulse"></div>
+          
+          <Link
+            to="/login"
+            className="relative flex items-center justify-center overflow-hidden rounded-full bg-[#2AABEE] px-8 py-3 text-[15px] font-bold tracking-wide text-white transition-all hover:scale-105 hover:bg-[#1a90cc]"
+          >
+            <span className="relative z-10">Get Started</span>
+          </Link>
         </div>
       </motion.div>
 
