@@ -15,10 +15,12 @@ const SCOPES = [
 
 // Step 1: redirect user to Google's consent screen
 exports.googleLogin = (req, res) => {
+  const { userId } = req.query;
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline', // required to get a refresh token
     prompt: 'consent',      // forces refresh token even on repeat logins
     scope: SCOPES,
+    state: userId || '',
   });
   res.redirect(url);
 };
@@ -26,7 +28,7 @@ exports.googleLogin = (req, res) => {
 // Step 2: handle Google's redirect back with the code
 exports.googleCallback = async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state } = req.query;
     if (!code) return res.status(400).send('Missing authorization code');
 
     // Exchange code for tokens
@@ -37,22 +39,29 @@ exports.googleCallback = async (req, res) => {
     const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
     const { data: profile } = await oauth2.userinfo.get();
 
-    // profile.id, profile.email, profile.name, profile.picture
+    // If state (existing userId) was passed, attach to that user
+    let userId = state || null;
 
-    // Find or create the UniDrive user, keyed by their Google email
-    const usersRef = db.collection('users');
-    const userQuery = await usersRef.where('email', '==', profile.email).get();
+    if (!userId) {
+      // Find or create the UniDrive user, keyed by their Google email
+      const usersRef = db.collection('users');
+      const userQuery = await usersRef.where('email', '==', profile.email).get();
 
-    let userId;
-    if (userQuery.empty) {
-      const newUser = await usersRef.add({
-        email: profile.email,
-        name: profile.name,
-        createdAt: new Date(),
-      });
-      userId = newUser.id;
-    } else {
-      userId = userQuery.docs[0].id;
+      if (userQuery.empty) {
+        const newUser = await usersRef.add({
+          email: profile.email,
+          name: profile.name,
+          picture: profile.picture || null,
+          createdAt: new Date(),
+        });
+        userId = newUser.id;
+      } else {
+        userId = userQuery.docs[0].id;
+        // Update profile picture on each login
+        await usersRef.doc(userId).update({
+          picture: profile.picture || null,
+        });
+      }
     }
 
     // Save this connected account's tokens under the user
@@ -72,7 +81,8 @@ exports.googleCallback = async (req, res) => {
       });
 
     // Redirect back to your frontend dashboard
-    res.redirect(`http://localhost:5173/dashboard?userId=${userId}`);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/dashboard?userId=${userId}`);
   } catch (err) {
     console.error('OAuth callback error:', err);
     res.status(500).send('Authentication failed');

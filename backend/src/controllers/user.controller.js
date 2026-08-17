@@ -15,6 +15,7 @@ exports.getUser = async (req, res) => {
       id: userDoc.id,
       name: data.name || null,
       email: data.email || null,
+      picture: data.picture || null,
     });
   } catch (err) {
     console.error('Get user error:', err);

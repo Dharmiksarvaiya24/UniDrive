@@ -4,6 +4,7 @@ const cors = require('cors');
 const { db } = require('./src/config/firebase');
 const authRoutes = require('./src/routes/auth.routes');
 const userRoutes = require('./src/routes/user.routes');
+const filesRoutes = require('./src/routes/files.routes');
 
 
 const app = express();
@@ -21,6 +22,7 @@ app.get('/', (req, res) => {
 
 app.use('/auth', authRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/files', filesRoutes);
  console.log('Firebase Connected');  
 
 // Start server
