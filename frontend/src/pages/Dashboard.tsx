@@ -23,6 +23,7 @@ import {
 import { FaGoogleDrive } from 'react-icons/fa'
 import { MacFileIcon } from '../components/dashboard/MacFileIcon'
 import { FilePreviewModal } from '../components/common/FilePreviewModal'
+import { ManageAccountsModal } from '../components/dashboard/ManageAccountsModal'
 import { API_BASE_URL } from '../config/api'
 
 /* ─── Types ─── */
@@ -45,6 +46,15 @@ interface ConnectedAccount {
   googleAccountId: string
   email: string
   name: string
+  storage?: {
+    limit: number
+    usage: number
+  } | null
+}
+
+interface StorageInfo {
+  totalLimit: number
+  totalUsage: number
 }
 
 /* ─── Helpers ─── */
@@ -97,12 +107,14 @@ function Dashboard() {
   const [showProfile, setShowProfile] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null)
+  const [manageAccountsOpen, setManageAccountsOpen] = useState(false)
   const [folderBreadcrumbs, setFolderBreadcrumbs] = useState<Array<{ id: string; name: string }>>([])
   const profileRef = useRef<HTMLDivElement>(null)
 
   // Real data state
   const [driveFiles, setDriveFiles] = useState<DriveFile[]>([])
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([])
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
   const [filesLoading, setFilesLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -143,6 +155,9 @@ function Dashboard() {
       .then((data) => {
         setDriveFiles(data.files || [])
         setConnectedAccounts(data.accounts || [])
+        if (data.storage) {
+          setStorageInfo(data.storage)
+        }
       })
       .catch((err) => console.error('Failed to fetch files:', err))
       .finally(() => setFilesLoading(false))
@@ -181,6 +196,23 @@ function Dashboard() {
   const handleLogout = () => {
     localStorage.removeItem('unidrive_userId')
     navigate('/login')
+  }
+
+  // Handle removing a connected account
+  const handleAccountRemoved = (accountId: string) => {
+    setConnectedAccounts((prev) => prev.filter((a) => a.googleAccountId !== accountId))
+    setDriveFiles((prev) => prev.filter((f) => f.accountId !== accountId))
+    // Re-fetch files and update storage totals
+    if (userId) {
+      fetch(`${API_BASE_URL}/api/files?userId=${userId}`)
+        .then((res) => res.json())
+        .then((data) => {
+          setDriveFiles(data.files || [])
+          setConnectedAccounts(data.accounts || [])
+          if (data.storage) setStorageInfo(data.storage)
+        })
+        .catch((err) => console.error('Error refreshing files after account removal:', err))
+    }
   }
 
   // Handle clicking file vs folder
@@ -254,19 +286,32 @@ function Dashboard() {
 
       {/* Accounts */}
       <div className="mt-8 px-4">
-        <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/30">
-          Accounts
-        </p>
+        <div className="flex items-center justify-between mb-2 px-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/30">
+            Accounts
+          </p>
+          <button
+            type="button"
+            onClick={() => setManageAccountsOpen(true)}
+            className="text-xs text-white/40 hover:text-white transition-colors"
+          >
+            Manage
+          </button>
+        </div>
         <div className="flex flex-col gap-1">
           {connectedAccounts.length > 0 ? (
             connectedAccounts.map((acc) => (
               <div
                 key={acc.googleAccountId}
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-white/60 transition-colors hover:bg-white/5"
+                className="group flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-white/60 transition-colors hover:bg-white/5"
               >
-                <FaGoogleDrive className="h-4 w-4 text-white/30" />
-                <span className="flex-1 truncate">{acc.email}</span>
-                <span className="h-2 w-2 rounded-full bg-green-400" />
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <FaGoogleDrive className="h-4 w-4 shrink-0 text-white/30" />
+                  <span className="truncate">{acc.email}</span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="h-2 w-2 rounded-full bg-green-400" />
+                </div>
               </div>
             ))
           ) : (
@@ -274,17 +319,57 @@ function Dashboard() {
           )}
         </div>
 
-        <a
-          href={`${API_BASE_URL}/auth/google?userId=${userId || localStorage.getItem('unidrive_userId') || ''}`}
-          className="mt-2 flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-white/5"
+        <button
+          type="button"
+          onClick={() => setManageAccountsOpen(true)}
+          className="mt-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-white/5"
         >
           <FiPlus className="h-4 w-4" />
-          Add account
-        </a>
+          Add / Manage accounts
+        </button>
       </div>
 
-      {/* User Profile */}
-      <div className="relative mt-auto border-t border-white/5 px-4 py-4" ref={profileRef}>
+      {/* Bottom Section: Combined Storage & User Profile */}
+      <div className="mt-auto flex flex-col">
+        {/* Storage Overview */}
+        <div className="px-4 pb-3">
+          <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/30">Storage</span>
+              <span className="text-xs font-semibold text-white/80">
+                {storageInfo && storageInfo.totalLimit > 0
+                  ? `${formatBytes(storageInfo.totalUsage)} / ${formatBytes(storageInfo.totalLimit)}`
+                  : '—'}
+              </span>
+            </div>
+
+            {/* Progress bar */}
+            <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-accent to-[#4eaef5] transition-all duration-500"
+                style={{
+                  width: `${
+                    storageInfo && storageInfo.totalLimit > 0
+                      ? Math.min(Math.max(Math.round((storageInfo.totalUsage / storageInfo.totalLimit) * 100), 2), 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+
+            <div className="mt-2 flex items-center justify-between text-[11px] text-white/40">
+              <span>
+                {storageInfo && storageInfo.totalLimit > 0
+                  ? `${((storageInfo.totalUsage / storageInfo.totalLimit) * 100).toFixed(1)}% used`
+                  : 'Combined storage'}
+              </span>
+              <span>{connectedAccounts.length} {connectedAccounts.length === 1 ? 'account' : 'accounts'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* User Profile */}
+        <div className="relative border-t border-white/5 px-4 py-4" ref={profileRef}>
         {/* Profile Popover */}
         <AnimatePresence>
           {showProfile && (
@@ -369,6 +454,7 @@ function Dashboard() {
           <FiChevronUp className={`h-4 w-4 text-white/30 transition-transform ${showProfile ? 'rotate-180' : ''}`} />
         </button>
       </div>
+    </div>
     </>
   )
 
@@ -382,6 +468,15 @@ function Dashboard() {
         accountEmail={selectedFile?.accountEmail}
         isOpen={!!selectedFile}
         onClose={() => setSelectedFile(null)}
+      />
+
+      {/* Manage Connected Accounts Modal */}
+      <ManageAccountsModal
+        isOpen={manageAccountsOpen}
+        onClose={() => setManageAccountsOpen(false)}
+        accounts={connectedAccounts}
+        userId={userId}
+        onAccountRemoved={handleAccountRemoved}
       />
 
       {/* ─── Desktop Sidebar ─── */}

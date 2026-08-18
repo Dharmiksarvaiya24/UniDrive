@@ -35,16 +35,13 @@ exports.getFiles = async (req, res) => {
 
     const allFiles = [];
     const accountsList = [];
+    let totalStorageLimit = 0;
+    let totalStorageUsage = 0;
 
-    // 3. For each connected account, fetch files from Google Drive
+    // 3. For each connected account, fetch files and storage quota from Google Drive
     for (const accountDoc of accountsSnap.docs) {
       const account = accountDoc.data();
-
-      accountsList.push({
-        googleAccountId: account.googleAccountId,
-        email: account.email,
-        name: account.name,
-      });
+      let accountStorage = null;
 
       // Create a fresh OAuth2 client for this account
       const oauth2Client = new google.auth.OAuth2(
@@ -79,6 +76,23 @@ exports.getFiles = async (req, res) => {
 
       try {
         const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+        // Fetch Storage Quota for this account
+        try {
+          const aboutRes = await drive.about.get({
+            fields: 'storageQuota(limit, usage, usageInDrive, usageInDriveTrash)',
+          });
+          if (aboutRes.data && aboutRes.data.storageQuota) {
+            const quota = aboutRes.data.storageQuota;
+            const limit = quota.limit ? parseInt(quota.limit, 10) : 0;
+            const usage = quota.usage ? parseInt(quota.usage, 10) : 0;
+            totalStorageLimit += limit;
+            totalStorageUsage += usage;
+            accountStorage = { limit, usage };
+          }
+        } catch (aboutErr) {
+          console.warn(`Drive about quota error for ${account.email}:`, aboutErr.message);
+        }
 
         const qQuery = folderId
           ? `trashed = false and '${folderId}' in parents`
@@ -120,6 +134,13 @@ exports.getFiles = async (req, res) => {
         );
         // Don't fail the entire request if one account errors — skip it
       }
+
+      accountsList.push({
+        googleAccountId: account.googleAccountId,
+        email: account.email,
+        name: account.name,
+        storage: accountStorage,
+      });
     }
 
     // 4. Sort all files by modifiedTime (newest first)
@@ -131,6 +152,10 @@ exports.getFiles = async (req, res) => {
       files: allFiles,
       accounts: accountsList,
       totalFiles: allFiles.length,
+      storage: {
+        totalLimit: totalStorageLimit,
+        totalUsage: totalStorageUsage,
+      },
     });
   } catch (err) {
     console.error('Get files error:', err);

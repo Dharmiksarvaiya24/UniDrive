@@ -15,12 +15,21 @@ const SCOPES = [
 
 // Step 1: redirect user to Google's consent screen
 exports.googleLogin = (req, res) => {
-  const { userId } = req.query;
+  const { userId, redirectUrl } = req.query;
+  const referer = req.headers.referer || req.headers.origin || '';
+  const isLocal = referer.includes('localhost') || referer.includes('127.0.0.1');
+  const returnHost = redirectUrl || (isLocal ? 'http://localhost:5173' : (process.env.FRONTEND_URL || 'http://localhost:5173'));
+
+  const statePayload = Buffer.from(
+    JSON.stringify({ userId: userId || '', returnHost })
+  ).toString('base64');
+
   const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline', // required to get a refresh token
-    prompt: 'consent',      // forces refresh token even on repeat logins
+    access_type: 'offline',            // required to get a refresh token
+    prompt: 'consent select_account',  // forces consent screen & account picker
     scope: SCOPES,
-    state: userId || '',
+    include_granted_scopes: true,
+    state: statePayload,
   });
   res.redirect(url);
 };
@@ -31,6 +40,21 @@ exports.googleCallback = async (req, res) => {
     const { code, state } = req.query;
     if (!code) return res.status(400).send('Missing authorization code');
 
+    // Decode state
+    let userId = null;
+    let returnHost = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+    if (state) {
+      try {
+        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
+        userId = decoded.userId || null;
+        if (decoded.returnHost) returnHost = decoded.returnHost;
+      } catch {
+        // Fallback for legacy plain userId state
+        userId = state;
+      }
+    }
+
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
@@ -38,9 +62,6 @@ exports.googleCallback = async (req, res) => {
     // Fetch the user's profile info
     const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
     const { data: profile } = await oauth2.userinfo.get();
-
-    // If state (existing userId) was passed, attach to that user
-    let userId = state || null;
 
     if (!userId) {
       // Find or create the UniDrive user, keyed by their Google email
@@ -80,9 +101,8 @@ exports.googleCallback = async (req, res) => {
         connectedAt: new Date(),
       });
 
-    // Redirect back to your frontend dashboard
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontendUrl}/dashboard?userId=${userId}`);
+    // Redirect back to the originating frontend dashboard
+    res.redirect(`${returnHost}/dashboard?userId=${userId}`);
   } catch (err) {
     console.error('OAuth callback error:', err);
     res.status(500).send('Authentication failed');

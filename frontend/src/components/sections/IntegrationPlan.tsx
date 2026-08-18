@@ -42,7 +42,7 @@ function IntegrationPlan() {
                 <TbCircleCheckFilled className="text-[#2AABEE] text-[1.125rem]" />
               </div>
               <p className="text-muted leading-relaxed">
-                <strong className="text-white/90 font-medium">Near-term:</strong>Integrations for Google Photos, Dropbox, OneDrive, and WebDAV.
+                <strong className="text-white/90 font-medium">Near-term:</strong> Integrations for Google Photos, Dropbox, OneDrive, and WebDAV.
               </p>
             </li>
             <li className="flex items-start gap-4 relative z-10">

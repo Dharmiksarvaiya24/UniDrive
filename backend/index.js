@@ -5,7 +5,7 @@ const { db } = require('./src/config/firebase');
 const authRoutes = require('./src/routes/auth.routes');
 const userRoutes = require('./src/routes/user.routes');
 const filesRoutes = require('./src/routes/files.routes');
-
+const accountsRoutes = require('./src/routes/accounts.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -23,7 +23,7 @@ app.get('/', (req, res) => {
 app.use('/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/files', filesRoutes);
- console.log('Firebase Connected');  
+app.use('/api/accounts', accountsRoutes);
 
 // Start server
 app.listen(PORT, () => {
