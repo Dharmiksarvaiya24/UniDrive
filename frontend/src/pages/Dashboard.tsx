@@ -19,6 +19,9 @@ import {
   FiLoader,
   FiChevronRight,
   FiArrowLeft,
+  FiFilter,
+  FiCheck,
+  FiRefreshCw,
 } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { MacFileIcon } from '../components/dashboard/MacFileIcon'
@@ -38,6 +41,7 @@ interface DriveFile {
   webViewLink?: string
   parents?: string[]
   dimensions?: string | null
+  starred?: boolean
   accountEmail: string
   accountId: string
 }
@@ -95,6 +99,8 @@ type SidebarTab = 'all' | 'favorites' | 'recent'
 
 function Dashboard() {
   const [activeTab, setActiveTab] = useState<SidebarTab>('all')
+  const [selectedAccountEmail, setSelectedAccountEmail] = useState<string | null>(null)
+  const [filterDropdownOpen, setFilterDropdownOpen] = useState(false)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -110,12 +116,15 @@ function Dashboard() {
   const [manageAccountsOpen, setManageAccountsOpen] = useState(false)
   const [folderBreadcrumbs, setFolderBreadcrumbs] = useState<Array<{ id: string; name: string }>>([])
   const profileRef = useRef<HTMLDivElement>(null)
+  const filterRef = useRef<HTMLDivElement>(null)
 
   // Real data state
-  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([])
+  const [rootFiles, setRootFiles] = useState<DriveFile[]>([])
+  const [subfolderFiles, setSubfolderFiles] = useState<DriveFile[]>([])
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([])
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
   const [filesLoading, setFilesLoading] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
   const currentFolder = folderBreadcrumbs.length > 0 ? folderBreadcrumbs[folderBreadcrumbs.length - 1] : null
@@ -153,7 +162,7 @@ function Dashboard() {
     fetch(`${API_BASE_URL}/api/files?userId=${userId}`)
       .then((res) => res.json())
       .then((data) => {
-        setDriveFiles(data.files || [])
+        setRootFiles(data.files || [])
         setConnectedAccounts(data.accounts || [])
         if (data.storage) {
           setStorageInfo(data.storage)
@@ -165,28 +174,29 @@ function Dashboard() {
 
   // Fetch subfolder files if drilling down into a folder
   useEffect(() => {
-    if (!userId || !currentFolder) return
+    if (!userId) return
+    if (!currentFolder) {
+      setSubfolderFiles([])
+      return
+    }
     setFilesLoading(true)
     fetch(`${API_BASE_URL}/api/files?userId=${userId}&folderId=${currentFolder.id}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.files && data.files.length > 0) {
-          setDriveFiles((prev) => {
-            const existingIds = new Set(prev.map((f) => f.id))
-            const newFiles = data.files.filter((f: DriveFile) => !existingIds.has(f.id))
-            return [...prev, ...newFiles]
-          })
-        }
+        setSubfolderFiles(data.files || [])
       })
       .catch((err) => console.error('Failed to fetch folder contents:', err))
       .finally(() => setFilesLoading(false))
-  }, [userId, currentFolder])
+  }, [userId, currentFolder?.id])
 
-  // Close popover when clicking outside
+  // Close popovers when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
         setShowProfile(false)
+      }
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setFilterDropdownOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -201,17 +211,45 @@ function Dashboard() {
   // Handle removing a connected account
   const handleAccountRemoved = (accountId: string) => {
     setConnectedAccounts((prev) => prev.filter((a) => a.googleAccountId !== accountId))
-    setDriveFiles((prev) => prev.filter((f) => f.accountId !== accountId))
+    setRootFiles((prev) => prev.filter((f) => f.accountId !== accountId))
+    setSubfolderFiles((prev) => prev.filter((f) => f.accountId !== accountId))
     // Re-fetch files and update storage totals
     if (userId) {
       fetch(`${API_BASE_URL}/api/files?userId=${userId}`)
         .then((res) => res.json())
         .then((data) => {
-          setDriveFiles(data.files || [])
+          setRootFiles(data.files || [])
           setConnectedAccounts(data.accounts || [])
           if (data.storage) setStorageInfo(data.storage)
         })
         .catch((err) => console.error('Error refreshing files after account removal:', err))
+    }
+  }
+
+  // Sync & Refresh all files from Google Drive
+  const handleSync = async () => {
+    if (!userId || isSyncing) return
+    setIsSyncing(true)
+    try {
+      // 1. Refresh root files, accounts, and storage
+      const rootRes = await fetch(`${API_BASE_URL}/api/files?userId=${userId}`)
+      const rootData = await rootRes.json()
+      setRootFiles(rootData.files || [])
+      setConnectedAccounts(rootData.accounts || [])
+      if (rootData.storage) {
+        setStorageInfo(rootData.storage)
+      }
+
+      // 2. If inside a subfolder, refresh subfolder contents as well
+      if (currentFolder) {
+        const folderRes = await fetch(`${API_BASE_URL}/api/files?userId=${userId}&folderId=${currentFolder.id}`)
+        const folderData = await folderRes.json()
+        setSubfolderFiles(folderData.files || [])
+      }
+    } catch (err) {
+      console.error('Failed to sync files:', err)
+    } finally {
+      setIsSyncing(false)
     }
   }
 
@@ -225,22 +263,38 @@ function Dashboard() {
     }
   }
 
-  // Filter files by search query, current folder, and active tab
-  const filteredFiles = driveFiles.filter((file) => {
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      const matchesName = file.name.toLowerCase().includes(q)
-      const matchesEmail = file.accountEmail.toLowerCase().includes(q)
-      return matchesName || matchesEmail
-    }
+  // Determine which files to display based on folder navigation and tabs
+  const displayedFiles = currentFolder ? subfolderFiles : rootFiles
 
-    if (currentFolder) {
-      // Inside a folder: show files that have currentFolder as parent
-      return file.parents && file.parents.includes(currentFolder.id)
-    }
+  // Filter files by account, search query, and active tab
+  const filteredFiles = displayedFiles
+    .filter((file) => {
+      // Account filter
+      if (selectedAccountEmail && file.accountEmail !== selectedAccountEmail) {
+        return false
+      }
 
-    return true
-  })
+      // Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase()
+        const matchesName = file.name.toLowerCase().includes(q)
+        const matchesEmail = file.accountEmail.toLowerCase().includes(q)
+        return matchesName || matchesEmail
+      }
+
+      // Active tab filter
+      if (activeTab === 'favorites') {
+        return file.starred === true
+      }
+
+      return true
+    })
+    .sort((a, b) => {
+      if (activeTab === 'recent') {
+        return new Date(b.modifiedTime).getTime() - new Date(a.modifiedTime).getTime()
+      }
+      return 0
+    })
 
   const sidebarItems: { key: SidebarTab; label: string; icon: React.ReactNode }[] = [
     { key: 'all', label: 'All files', icon: <FiGrid className="h-4 w-4" /> },
@@ -298,21 +352,47 @@ function Dashboard() {
             Manage
           </button>
         </div>
+
+        {connectedAccounts.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelectedAccountEmail(null)}
+            className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+              selectedAccountEmail === null
+                ? 'bg-white/10 text-white'
+                : 'text-white/40 hover:bg-white/5 hover:text-white/70'
+            }`}
+          >
+            <span>All accounts combined</span>
+            <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] text-white/60">
+              {connectedAccounts.length}
+            </span>
+          </button>
+        )}
+
         <div className="flex flex-col gap-1">
           {connectedAccounts.length > 0 ? (
             connectedAccounts.map((acc) => (
-              <div
+              <button
+                type="button"
                 key={acc.googleAccountId}
-                className="group flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-white/60 transition-colors hover:bg-white/5"
+                onClick={() =>
+                  setSelectedAccountEmail((prev) => (prev === acc.email ? null : acc.email))
+                }
+                className={`group flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors ${
+                  selectedAccountEmail === acc.email
+                    ? 'bg-accent/15 text-white ring-1 ring-accent/30'
+                    : 'text-white/60 hover:bg-white/5'
+                }`}
               >
-                <div className="flex items-center gap-3 overflow-hidden">
-                  <FaGoogleDrive className="h-4 w-4 shrink-0 text-white/30" />
+                <div className="flex items-center gap-3 overflow-hidden text-left">
+                  <FaGoogleDrive className={`h-4 w-4 shrink-0 ${selectedAccountEmail === acc.email ? 'text-accent' : 'text-white/30'}`} />
                   <span className="truncate">{acc.email}</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="h-2 w-2 rounded-full bg-green-400" />
                 </div>
-              </div>
+              </button>
             ))
           ) : (
             <p className="px-3 py-2 text-xs text-white/20">No accounts linked</p>
@@ -575,14 +655,22 @@ function Dashboard() {
                   </div>
                 </div>
               ) : (
-                <motion.h1
+                <motion.div
+                  key={activeTab + (selectedAccountEmail || '')}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4 }}
-                  className="text-xl font-semibold sm:text-2xl"
+                  className="flex items-center gap-2"
                 >
-                  All files
-                </motion.h1>
+                  <h1 className="text-xl font-semibold sm:text-2xl">
+                    {activeTab === 'favorites' ? 'Favorites' : activeTab === 'recent' ? 'Recent' : 'All files'}
+                  </h1>
+                  {selectedAccountEmail && (
+                    <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/60">
+                      {selectedAccountEmail}
+                    </span>
+                  )}
+                </motion.div>
               )}
             </div>
 
@@ -626,11 +714,130 @@ function Dashboard() {
                   <FiList className="h-4 w-4" />
                 </button>
               </div>
+
+              {/* Filter by Account Dropdown */}
+              <div className="relative" ref={filterRef}>
+                <button
+                  type="button"
+                  onClick={() => setFilterDropdownOpen(!filterDropdownOpen)}
+                  title="Filter files by account"
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-all ${
+                    selectedAccountEmail
+                      ? 'border-accent/40 bg-accent/15 text-accent shadow-sm shadow-accent/10 ring-1 ring-accent/20'
+                      : filterDropdownOpen
+                      ? 'border-white/20 bg-white/10 text-white'
+                      : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <FiFilter className={`h-3.5 w-3.5 ${selectedAccountEmail ? 'text-accent' : 'text-white/50'}`} />
+                  <span className="hidden sm:inline">
+                    {selectedAccountEmail ? selectedAccountEmail.split('@')[0] : 'All Accounts'}
+                  </span>
+                  {selectedAccountEmail && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse sm:hidden" />
+                  )}
+                </button>
+
+                <AnimatePresence>
+                  {filterDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-full mt-2 w-64 origin-top-right overflow-hidden rounded-xl border border-white/10 bg-[#161616] p-1.5 shadow-2xl shadow-black/80 z-50 backdrop-blur-xl"
+                    >
+                      <div className="px-2.5 py-2 border-b border-white/5 mb-1 flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-white/40">
+                          Filter by Account
+                        </span>
+                        <span className="text-[10px] text-white/30">
+                          {connectedAccounts.length} {connectedAccounts.length === 1 ? 'drive' : 'drives'}
+                        </span>
+                      </div>
+
+                      {/* All Accounts Option */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedAccountEmail(null)
+                          setFilterDropdownOpen(false)
+                        }}
+                        className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs transition-colors ${
+                          selectedAccountEmail === null
+                            ? 'bg-white/10 font-semibold text-white'
+                            : 'text-white/60 hover:bg-white/5 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <FiGrid className="h-3.5 w-3.5 text-white/40" />
+                          <span>All accounts (Combined)</span>
+                        </div>
+                        {selectedAccountEmail === null && (
+                          <FiCheck className="h-3.5 w-3.5 text-accent" />
+                        )}
+                      </button>
+
+                      {/* Individual Accounts */}
+                      <div className="mt-1 flex flex-col gap-0.5 max-h-56 overflow-y-auto">
+                        {connectedAccounts.length > 0 ? (
+                          connectedAccounts.map((acc) => {
+                            const isSelected = selectedAccountEmail === acc.email
+                            return (
+                              <button
+                                key={acc.googleAccountId}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedAccountEmail(isSelected ? null : acc.email)
+                                  setFilterDropdownOpen(false)
+                                }}
+                                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs transition-colors ${
+                                  isSelected
+                                    ? 'bg-accent/15 font-medium text-white ring-1 ring-accent/30'
+                                    : 'text-white/70 hover:bg-white/5 hover:text-white'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 overflow-hidden text-left">
+                                  <FaGoogleDrive className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-accent' : 'text-white/40'}`} />
+                                  <span className="truncate">{acc.email}</span>
+                                </div>
+                                {isSelected && (
+                                  <FiCheck className="h-3.5 w-3.5 shrink-0 text-accent ml-2" />
+                                )}
+                              </button>
+                            )
+                          })
+                        ) : (
+                          <div className="px-2.5 py-2 text-[11px] text-white/30">
+                            No accounts connected
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Sync Button */}
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={isSyncing || filesLoading}
+                title="Sync and refresh latest files from Google Drive"
+                className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-all ${
+                  isSyncing
+                    ? 'border-accent/40 bg-accent/15 text-accent shadow-sm'
+                    : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white disabled:opacity-50'
+                }`}
+              >
+                <FiRefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-accent' : 'text-white/60'}`} />
+                <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync'}</span>
+              </button>
             </div>
           </div>
 
           {/* Stats Cards (only shown on root / All files view) */}
-          {folderBreadcrumbs.length === 0 && (
+          {folderBreadcrumbs.length === 0 && activeTab === 'all' && (
             <motion.div
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
@@ -640,7 +847,7 @@ function Dashboard() {
               <div className="rounded-2xl border border-white/5 bg-white/[0.03] px-5 py-4 transition-colors hover:border-white/10 sm:px-6 sm:py-5">
                 <p className="text-xs font-medium text-white/40">Total files</p>
                 <p className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
-                  {filesLoading ? '...' : driveFiles.length.toLocaleString()}
+                  {filesLoading ? '...' : (selectedAccountEmail ? filteredFiles.length : rootFiles.length).toLocaleString()}
                 </p>
                 <p className="mt-1 text-xs font-medium text-green-400">
                   {filesLoading ? 'loading' : 'synced just now'}
@@ -656,7 +863,7 @@ function Dashboard() {
               <div className="rounded-2xl border border-white/5 bg-white/[0.03] px-5 py-4 transition-colors hover:border-white/10 sm:px-6 sm:py-5">
                 <p className="text-xs font-medium text-white/40">Combined size</p>
                 <p className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
-                  {filesLoading ? '...' : formatBytes(driveFiles.reduce((sum, f) => sum + (f.size || 0), 0))}
+                  {filesLoading ? '...' : formatBytes((selectedAccountEmail ? filteredFiles : rootFiles).reduce((sum, f) => sum + (f.size || 0), 0))}
                 </p>
                 <p className="mt-1 text-xs font-medium text-green-400">across all accounts</p>
               </div>
@@ -678,7 +885,15 @@ function Dashboard() {
               <div className="flex flex-col items-center justify-center gap-3 py-16 text-white/30">
                 <FiFolder className="h-8 w-8" />
                 <p className="text-sm">
-                  {searchQuery ? 'No files match your search' : 'This folder is empty.'}
+                  {searchQuery
+                    ? 'No files match your search.'
+                    : activeTab === 'favorites'
+                    ? 'No starred files found.'
+                    : activeTab === 'recent'
+                    ? 'No recent files found.'
+                    : selectedAccountEmail
+                    ? `No files found for ${selectedAccountEmail}.`
+                    : 'This folder is empty.'}
                 </p>
               </div>
             )}

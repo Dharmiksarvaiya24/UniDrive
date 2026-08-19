@@ -96,12 +96,12 @@ exports.getFiles = async (req, res) => {
 
         const qQuery = folderId
           ? `trashed = false and '${folderId}' in parents`
-          : 'trashed = false';
+          : "trashed = false and 'root' in parents";
 
         const response = await drive.files.list({
           pageSize: 100,
           fields:
-            'files(id, name, mimeType, size, modifiedTime, iconLink, thumbnailLink, webViewLink, imageMediaMetadata(width, height), videoMediaMetadata(width, height), parents)',
+            'files(id, name, mimeType, size, modifiedTime, iconLink, thumbnailLink, webViewLink, starred, imageMediaMetadata(width, height), videoMediaMetadata(width, height), parents)',
           orderBy: 'modifiedTime desc',
           q: qQuery,
         });
@@ -115,6 +115,7 @@ exports.getFiles = async (req, res) => {
           iconLink: file.iconLink,
           thumbnailLink: file.thumbnailLink,
           webViewLink: file.webViewLink,
+          starred: !!file.starred,
           parents: file.parents || [],
           dimensions: file.imageMediaMetadata
             ? `${file.imageMediaMetadata.width} × ${file.imageMediaMetadata.height}`
