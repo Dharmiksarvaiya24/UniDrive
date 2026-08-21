@@ -18,6 +18,8 @@ const SCOPES = [
 // Allowed frontend origins for OAuth return — never trust arbitrary redirect targets
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null,
+  'https://unidrive.dharmik.live',
   'http://localhost:5173',
   'http://localhost:4173',
 ].filter(Boolean);
@@ -35,22 +37,31 @@ function hashPassword(password, salt) {
 }
 
 // Step 1: redirect user to Google's OAuth screen.
-// userId comes ONLY from the verified session cookie (if present) — never from query params.
+// userId comes from verified session (cookie, Bearer token header, or query param)
 exports.googleLogin = (req, res) => {
-  // Read verified session (optional — anonymous users have no session yet)
-  const token = req.cookies?.[SESSION_COOKIE_NAME];
+  let token = req.cookies?.[SESSION_COOKIE_NAME];
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    }
+  }
+  if (!token && req.query.token) {
+    token = req.query.token;
+  }
+
   const decoded = token ? verifySessionToken(token) : null;
   const verifiedUserId = decoded?.userId || null;
 
   const requestedHost = req.query.redirectUrl;
   const referer = req.headers.referer || req.headers.origin || '';
   const isLocal = referer.includes('localhost') || referer.includes('127.0.0.1');
-  const defaultHost = isLocal ? 'http://localhost:5173' : (process.env.FRONTEND_URL || 'http://localhost:5173');
+  const defaultHost = isLocal ? 'http://localhost:5173' : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live');
 
   // Only allow known-good origins in the state payload (prevents open redirect)
-  let returnHost = defaultHost;
+  let returnHost = defaultHost.replace(/\/$/, '');
   if (requestedHost && ALLOWED_ORIGINS.includes(requestedHost)) {
-    returnHost = requestedHost;
+    returnHost = requestedHost.replace(/\/$/, '');
   }
 
   const statePayload = Buffer.from(
@@ -80,7 +91,7 @@ const GOOGLE_ERROR_MESSAGES = {
 // Step 2: handle Google's redirect back with the code
 exports.googleCallback = async (req, res) => {
   // Determine a safe return host early so we can redirect on any error
-  let returnHost = process.env.FRONTEND_URL || 'http://localhost:5173';
+  let returnHost = (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live').replace(/\/$/, '');
 
   try {
     const { code, state, error: googleError } = req.query;
@@ -105,7 +116,7 @@ exports.googleCallback = async (req, res) => {
         const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
         stateUserId = decoded.userId || null;
         if (decoded.returnHost && ALLOWED_ORIGINS.includes(decoded.returnHost)) {
-          returnHost = decoded.returnHost;
+          returnHost = decoded.returnHost.replace(/\/$/, '');
         }
       } catch {
         // Malformed state — proceed without userId (treat as fresh login)
@@ -122,17 +133,22 @@ exports.googleCallback = async (req, res) => {
     const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
     const { data: profile } = await oauth2.userinfo.get();
 
+    const cleanEmail = profile?.email ? profile.email.toLowerCase().trim() : '';
+    if (!cleanEmail) {
+      return res.redirect(`${returnHost}/login?error=${encodeURIComponent('Could not retrieve email from Google profile.')}`);
+    }
+
     let userId = stateUserId || null;
 
     if (!userId) {
       // Find or create the UniDrive user, keyed by their Google email
       const usersRef = db.collection('users');
-      const userQuery = await usersRef.where('email', '==', profile.email.toLowerCase().trim()).get();
+      const userQuery = await usersRef.where('email', '==', cleanEmail).get();
 
       if (userQuery.empty) {
         const newUser = await usersRef.add({
-          email: profile.email.toLowerCase().trim(),
-          name: profile.name || profile.email.split('@')[0],
+          email: cleanEmail,
+          name: profile.name || cleanEmail.split('@')[0],
           picture: profile.picture || null,
           authProvider: 'google',
           createdAt: new Date(),
@@ -182,11 +198,11 @@ exports.googleCallback = async (req, res) => {
       .doc(profile.id) // Google's account ID, unique per Google account
       .set(accountDocData, { merge: true });
 
-    // Issue signed 7-day session as HTTP-only cookie (NOT in URL, NOT localStorage)
-    setSessionCookie(res, userId);
+    // Issue signed 7-day session as HTTP-only cookie + pass in URL fragment for cross-domain support
+    const sessionToken = setSessionCookie(res, userId);
 
-    // Redirect back to the originating frontend dashboard — no tokens in URL
-    res.redirect(`${returnHost}/dashboard`);
+    // Redirect back to the originating frontend dashboard with session token in hash fragment
+    res.redirect(`${returnHost}/dashboard#session=${sessionToken}`);
   } catch (err) {
     // Log the real error internally but never expose details to the client
     console.error('OAuth callback error:', err.message || err);
@@ -231,10 +247,11 @@ exports.register = async (req, res) => {
         updatedAt: new Date(),
       });
 
-      setSessionCookie(res, userDoc.id);
+      const token = setSessionCookie(res, userDoc.id);
 
       return res.json({
         success: true,
+        token,
         user: {
           id: userDoc.id,
           email: userData.email,
@@ -258,10 +275,11 @@ exports.register = async (req, res) => {
       createdAt: new Date(),
     });
 
-    setSessionCookie(res, newUserRef.id);
+    const token = setSessionCookie(res, newUserRef.id);
 
     res.status(201).json({
       success: true,
+      token,
       user: {
         id: newUserRef.id,
         email: cleanEmail,
@@ -305,10 +323,11 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    setSessionCookie(res, userDoc.id);
+    const token = setSessionCookie(res, userDoc.id);
 
     res.json({
       success: true,
+      token,
       user: {
         id: userDoc.id,
         email: userData.email,
@@ -322,11 +341,18 @@ exports.login = async (req, res) => {
   }
 };
 
-// GET /auth/session — returns current user's basic info from the verified session cookie.
-// Used by the frontend on app load ("am I logged in?") without hitting Google again.
+// GET /auth/session — returns current user's basic info from the verified session.
+// Checks cookie first, then Bearer header.
 exports.getSession = async (req, res) => {
   try {
-    const token = req.cookies?.[SESSION_COOKIE_NAME];
+    let token = req.cookies?.[SESSION_COOKIE_NAME];
+    if (!token) {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.substring(7);
+      }
+    }
+
     if (!token) {
       return res.status(401).json({ valid: false, error: 'No session' });
     }

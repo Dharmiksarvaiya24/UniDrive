@@ -78,9 +78,20 @@ function clearSessionCookie(res) {
 }
 
 function sessionMiddleware(req, res, next) {
-  const token = req.cookies?.[SESSION_COOKIE_NAME];
+  // 1. Try the HTTP-only session cookie first (same-domain deploys)
+  let token = req.cookies?.[SESSION_COOKIE_NAME];
+
+  // 2. Fall back to Authorization: Bearer header (cross-domain deploys where
+  //    the browser silently blocks cross-site cookies)
   if (!token) {
-    return res.status(401).json({ error: 'Authentication required. No session cookie.' });
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    }
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required. No session.' });
   }
 
   const decoded = verifySessionToken(token);

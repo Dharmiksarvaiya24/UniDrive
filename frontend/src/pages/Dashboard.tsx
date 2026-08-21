@@ -28,6 +28,7 @@ import { MacFileIcon } from '../components/dashboard/MacFileIcon'
 import { FilePreviewModal } from '../components/common/FilePreviewModal'
 import { ManageAccountsModal } from '../components/dashboard/ManageAccountsModal'
 import { API_BASE_URL } from '../config/api'
+import { authFetch, captureHashToken, clearSessionToken } from '../utils/auth'
 
 /* ─── Types ─── */
 interface DriveFile {
@@ -126,11 +127,10 @@ function Dashboard() {
 
   const currentFolder = folderBreadcrumbs.length > 0 ? folderBreadcrumbs[folderBreadcrumbs.length - 1] : null
 
-  // Fetch and verify user profile via the HTTP-only session cookie
+  // Fetch and verify user profile via session token / cookie
   useEffect(() => {
-    fetch(`${API_BASE_URL}/auth/session`, {
-      credentials: 'include',
-    })
+    captureHashToken()
+    authFetch(`${API_BASE_URL}/auth/session`)
       .then((res) => {
         if (!res.ok) throw new Error('Unauthorized')
         return res.json()
@@ -147,15 +147,16 @@ function Dashboard() {
       })
       .catch((err) => {
         console.error('Failed to verify user session:', err)
+        clearSessionToken()
         navigate('/login', { replace: true })
       })
   }, [navigate])
 
-  // Fetch root files from backend (session cookie identifies the user)
+  // Fetch root files from backend
   useEffect(() => {
     if (!userId) return
     setFilesLoading(true)
-    fetch(`${API_BASE_URL}/api/files`, { credentials: 'include' })
+    authFetch(`${API_BASE_URL}/api/files`)
       .then((res) => res.json())
       .then((data) => {
         setRootFiles(data.files || [])
@@ -176,7 +177,7 @@ function Dashboard() {
       return
     }
     setFilesLoading(true)
-    fetch(`${API_BASE_URL}/api/files?folderId=${currentFolder.id}`, { credentials: 'include' })
+    authFetch(`${API_BASE_URL}/api/files?folderId=${currentFolder.id}`)
       .then((res) => res.json())
       .then((data) => {
         setSubfolderFiles(data.files || [])
@@ -201,13 +202,13 @@ function Dashboard() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE_URL}/auth/logout`, {
+      await authFetch(`${API_BASE_URL}/auth/logout`, {
         method: 'POST',
-        credentials: 'include',
       })
     } catch (err) {
       console.error('Logout request failed:', err)
     }
+    clearSessionToken()
     navigate('/login', { replace: true })
   }
 
@@ -218,7 +219,7 @@ function Dashboard() {
     setSubfolderFiles((prev) => prev.filter((f) => f.accountId !== accountId))
     // Re-fetch files and update storage totals
     if (userId) {
-      fetch(`${API_BASE_URL}/api/files`, { credentials: 'include' })
+      authFetch(`${API_BASE_URL}/api/files`)
         .then((res) => res.json())
         .then((data) => {
           setRootFiles(data.files || [])
@@ -235,7 +236,7 @@ function Dashboard() {
     setIsSyncing(true)
     try {
       // 1. Refresh root files, accounts, and storage
-      const rootRes = await fetch(`${API_BASE_URL}/api/files`, { credentials: 'include' })
+      const rootRes = await authFetch(`${API_BASE_URL}/api/files`)
       const rootData = await rootRes.json()
       setRootFiles(rootData.files || [])
       setConnectedAccounts(rootData.accounts || [])
@@ -245,7 +246,7 @@ function Dashboard() {
 
       // 2. If inside a subfolder, refresh subfolder contents as well
       if (currentFolder) {
-        const folderRes = await fetch(`${API_BASE_URL}/api/files?folderId=${currentFolder.id}`, { credentials: 'include' })
+        const folderRes = await authFetch(`${API_BASE_URL}/api/files?folderId=${currentFolder.id}`)
         const folderData = await folderRes.json()
         setSubfolderFiles(folderData.files || [])
       }

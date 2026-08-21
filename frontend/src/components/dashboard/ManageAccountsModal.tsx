@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { FiX, FiTrash2, FiPlus, FiAlertCircle, FiLoader, FiCheck } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { API_BASE_URL } from '../../config/api'
+import { authFetch } from '../../utils/auth'
 
 interface ConnectedAccount {
   googleAccountId: string
@@ -45,9 +46,9 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
     setStatusMessage(null)
 
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${API_BASE_URL}/api/accounts/${accountId}`,
-        { method: 'DELETE', credentials: 'include' }
+        { method: 'DELETE' }
       )
       const data = await res.json()
 

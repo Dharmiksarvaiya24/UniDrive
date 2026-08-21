@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { API_BASE_URL } from '../../config/api'
+import { authFetch, captureHashToken, clearSessionToken } from '../../utils/auth'
 
 interface ProtectedRouteProps {
   children: ReactNode
@@ -14,11 +15,10 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   useEffect(() => {
     let isMounted = true
 
-    // Check "am I logged in?" via the HTTP-only session cookie.
-    // No tokens in localStorage or URL — the browser sends the cookie automatically.
-    fetch(`${API_BASE_URL}/auth/session`, {
-      credentials: 'include',
-    })
+    // Capture token from hash fragment if redirected from OAuth (e.g. #session=xyz)
+    captureHashToken()
+
+    authFetch(`${API_BASE_URL}/auth/session`)
       .then((res) => {
         if (!isMounted) return
         if (!res.ok) throw new Error('Unauthorized')
@@ -29,11 +29,15 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
         if (data?.valid && data?.userId) {
           setIsAuthenticated(true)
         } else {
+          clearSessionToken()
           setIsAuthenticated(false)
         }
       })
       .catch(() => {
-        if (isMounted) setIsAuthenticated(false)
+        if (isMounted) {
+          clearSessionToken()
+          setIsAuthenticated(false)
+        }
       })
       .finally(() => {
         if (isMounted) setIsValidating(false)

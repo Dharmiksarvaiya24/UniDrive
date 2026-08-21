@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import logo from '../assets/logo-drive.png'
 import { API_BASE_URL } from '../config/api'
+import { authFetch, captureHashToken, setSessionToken } from '../utils/auth'
 
 function Login() {
   const navigate = useNavigate()
@@ -28,12 +29,14 @@ function Login() {
     }
   }, [searchParams])
 
-  // If already logged in (valid session cookie), redirect to dashboard
+  // If already logged in (valid session cookie/Bearer token), redirect to dashboard
   useEffect(() => {
     let isMounted = true
-    fetch(`${API_BASE_URL}/auth/session`, {
-      credentials: 'include',
-    })
+
+    // Capture token from hash fragment if present (e.g. #session=...)
+    captureHashToken()
+
+    authFetch(`${API_BASE_URL}/auth/session`)
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
         if (!isMounted) return
@@ -70,12 +73,11 @@ function Login() {
       const endpoint = mode === 'signin' ? '/auth/login' : '/auth/register'
       const payload = mode === 'signin' ? { email, password } : { email, password, name }
 
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const res = await authFetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
         body: JSON.stringify(payload),
       })
 
@@ -85,8 +87,12 @@ function Login() {
         throw new Error(data.error || 'Authentication failed. Please check your credentials.')
       }
 
+      if (data.token) {
+        setSessionToken(data.token)
+      }
+
       if (mode === 'signup' && data.user?.id) {
-        // Session cookie is set by the backend. Redirect to Google OAuth to
+        // Session cookie/token is set by the backend. Redirect to Google OAuth to
         // request Drive access for the newly created account.
         window.location.href = `${API_BASE_URL}/auth/google`
         return
