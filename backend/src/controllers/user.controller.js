@@ -1,9 +1,10 @@
 const { db } = require('../config/firebase');
 
-// GET /api/user/:id — return user profile from Firestore
+// GET /api/user/me — return the session user's profile from Firestore.
+// A user can only read their own profile; userId comes from the verified session.
 exports.getUser = async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.userId;
     const userDoc = await db.collection('users').doc(id).get();
 
     if (!userDoc.exists) {

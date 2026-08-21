@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import logo from '../assets/logo-drive.png'
 import {
@@ -102,11 +102,8 @@ function Dashboard() {
   const [selectedAccountEmail, setSelectedAccountEmail] = useState<string | null>(null)
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
-  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const [userId, setUserId] = useState<string | null>(() => {
-    return new URLSearchParams(window.location.search).get('userId') || localStorage.getItem('unidrive_userId')
-  })
+  const [userId, setUserId] = useState<string | null>(null)
   const [userName, setUserName] = useState<string | null>(null)
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [userPicture, setUserPicture] = useState<string | null>(null)
@@ -129,37 +126,36 @@ function Dashboard() {
 
   const currentFolder = folderBreadcrumbs.length > 0 ? folderBreadcrumbs[folderBreadcrumbs.length - 1] : null
 
-  // Persist userId from URL to localStorage
+  // Fetch and verify user profile via the HTTP-only session cookie
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const urlUserId = params.get('userId')
-    if (urlUserId) {
-      localStorage.setItem('unidrive_userId', urlUserId)
-      setUserId(urlUserId)
-    } else {
-      const stored = localStorage.getItem('unidrive_userId')
-      if (stored) setUserId(stored)
-    }
-  }, [searchParams])
-
-  // Fetch user profile
-  useEffect(() => {
-    if (!userId) return
-    fetch(`${API_BASE_URL}/api/user/${userId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.name) setUserName(data.name)
-        if (data.email) setUserEmail(data.email)
-        if (data.picture) setUserPicture(data.picture)
+    fetch(`${API_BASE_URL}/auth/session`, {
+      credentials: 'include',
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Unauthorized')
+        return res.json()
       })
-      .catch((err) => console.error('Failed to fetch user:', err))
-  }, [userId])
+      .then((data) => {
+        if (data.valid && data.userId) {
+          setUserId(data.userId)
+          if (data.user?.name) setUserName(data.user.name)
+          if (data.user?.email) setUserEmail(data.user.email)
+          if (data.user?.picture) setUserPicture(data.user.picture)
+        } else {
+          throw new Error('Invalid user session')
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to verify user session:', err)
+        navigate('/login', { replace: true })
+      })
+  }, [navigate])
 
-  // Fetch root files from backend
+  // Fetch root files from backend (session cookie identifies the user)
   useEffect(() => {
     if (!userId) return
     setFilesLoading(true)
-    fetch(`${API_BASE_URL}/api/files?userId=${userId}`)
+    fetch(`${API_BASE_URL}/api/files`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
         setRootFiles(data.files || [])
@@ -180,7 +176,7 @@ function Dashboard() {
       return
     }
     setFilesLoading(true)
-    fetch(`${API_BASE_URL}/api/files?userId=${userId}&folderId=${currentFolder.id}`)
+    fetch(`${API_BASE_URL}/api/files?folderId=${currentFolder.id}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => {
         setSubfolderFiles(data.files || [])
@@ -203,9 +199,16 @@ function Dashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const handleLogout = () => {
-    localStorage.removeItem('unidrive_userId')
-    navigate('/login')
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+    } catch (err) {
+      console.error('Logout request failed:', err)
+    }
+    navigate('/login', { replace: true })
   }
 
   // Handle removing a connected account
@@ -215,7 +218,7 @@ function Dashboard() {
     setSubfolderFiles((prev) => prev.filter((f) => f.accountId !== accountId))
     // Re-fetch files and update storage totals
     if (userId) {
-      fetch(`${API_BASE_URL}/api/files?userId=${userId}`)
+      fetch(`${API_BASE_URL}/api/files`, { credentials: 'include' })
         .then((res) => res.json())
         .then((data) => {
           setRootFiles(data.files || [])
@@ -232,7 +235,7 @@ function Dashboard() {
     setIsSyncing(true)
     try {
       // 1. Refresh root files, accounts, and storage
-      const rootRes = await fetch(`${API_BASE_URL}/api/files?userId=${userId}`)
+      const rootRes = await fetch(`${API_BASE_URL}/api/files`, { credentials: 'include' })
       const rootData = await rootRes.json()
       setRootFiles(rootData.files || [])
       setConnectedAccounts(rootData.accounts || [])
@@ -242,7 +245,7 @@ function Dashboard() {
 
       // 2. If inside a subfolder, refresh subfolder contents as well
       if (currentFolder) {
-        const folderRes = await fetch(`${API_BASE_URL}/api/files?userId=${userId}&folderId=${currentFolder.id}`)
+        const folderRes = await fetch(`${API_BASE_URL}/api/files?folderId=${currentFolder.id}`, { credentials: 'include' })
         const folderData = await folderRes.json()
         setSubfolderFiles(folderData.files || [])
       }
@@ -487,10 +490,12 @@ function Dashboard() {
                     <span className="truncate">{userEmail}</span>
                   </div>
                 )}
-                {userId && (
-                  <div className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-white/30">
-                    <FiUser className="h-4 w-4 shrink-0 text-white/20" />
-                    <span className="truncate text-xs" title={userId}>ID: {userId}</span>
+                {(userName || userEmail) && (
+                  <div className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-white/50">
+                    <FiUser className="h-4 w-4 shrink-0 text-white/30" />
+                    <span className="truncate text-xs" title={userName || userEmail?.split('@')[0]}>
+                      Username: {userName || userEmail?.split('@')[0]}
+                    </span>
                   </div>
                 )}
               </div>
@@ -555,7 +560,6 @@ function Dashboard() {
         isOpen={manageAccountsOpen}
         onClose={() => setManageAccountsOpen(false)}
         accounts={connectedAccounts}
-        userId={userId}
         onAccountRemoved={handleAccountRemoved}
       />
 
@@ -880,8 +884,30 @@ function Dashboard() {
               </div>
             )}
 
-            {/* Empty state */}
-            {!filesLoading && filteredFiles.length === 0 && (
+            {/* Empty state: No connected accounts */}
+            {!filesLoading && connectedAccounts.length === 0 && (
+              <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/5 border border-white/10 text-accent">
+                  <FaGoogleDrive className="h-8 w-8" />
+                </div>
+                <div className="max-w-md space-y-1">
+                  <h3 className="text-lg font-semibold text-white">No Google Drive connected yet</h3>
+                  <p className="text-sm text-white/40">
+                    Connect your Google Drive account to view and manage all your files in UniDrive.
+                  </p>
+                </div>
+                <a
+                  href={`${API_BASE_URL}/auth/google`}
+                  className="mt-2 inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-accent/80 hover:shadow-lg hover:shadow-accent/20"
+                >
+                  <FaGoogleDrive className="h-4 w-4" />
+                  <span>Connect Google Drive</span>
+                </a>
+              </div>
+            )}
+
+            {/* Empty state: Filtered files empty */}
+            {!filesLoading && connectedAccounts.length > 0 && filteredFiles.length === 0 && (
               <div className="flex flex-col items-center justify-center gap-3 py-16 text-white/30">
                 <FiFolder className="h-8 w-8" />
                 <p className="text-sm">

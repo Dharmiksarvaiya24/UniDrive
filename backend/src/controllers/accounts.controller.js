@@ -1,16 +1,15 @@
 const { db } = require('../config/firebase');
 const { google } = require('googleapis');
+const { decrypt } = require('../utils/encryption');
 
 /**
- * GET /api/accounts?userId=X
- * List all connected Google accounts for a user
+ * GET /api/accounts
+ * List all connected Google accounts for the session user.
+ * userId comes from the verified session cookie (req.userId).
  */
 exports.getAccounts = async (req, res) => {
   try {
-    const { userId } = req.query;
-    if (!userId) {
-      return res.status(400).json({ error: 'Missing userId query parameter' });
-    }
+    const userId = req.userId;
 
     const accountsSnap = await db
       .collection('users')
@@ -37,18 +36,16 @@ exports.getAccounts = async (req, res) => {
 };
 
 /**
- * DELETE /api/accounts/:accountId?userId=X
- * Disconnect/remove a connected Google account
+ * DELETE /api/accounts/:accountId
+ * Disconnect/remove a connected Google account for the session user.
  */
 exports.removeAccount = async (req, res) => {
   try {
     const { accountId } = req.params;
-    const { userId } = req.query;
+    const userId = req.userId;
 
-    if (!userId || !accountId) {
-      return res
-        .status(400)
-        .json({ error: 'Missing userId or accountId parameter' });
+    if (!accountId) {
+      return res.status(400).json({ error: 'Missing accountId parameter' });
     }
 
     const accountRef = db
@@ -72,7 +69,7 @@ exports.removeAccount = async (req, res) => {
           process.env.GOOGLE_CLIENT_SECRET,
           process.env.GOOGLE_REDIRECT_URI
         );
-        await oauth2Client.revokeToken(accountData.accessToken);
+        await oauth2Client.revokeToken(decrypt(accountData.accessToken));
       } catch (revokeErr) {
         console.warn('Could not revoke token with Google:', revokeErr.message);
       }

@@ -1,20 +1,20 @@
 const { google } = require('googleapis');
 const { db } = require('../config/firebase');
+const { decrypt, encrypt } = require('../utils/encryption');
 
 /**
- * GET /api/files?userId=X
+ * GET /api/files?folderId=X
+ * userId comes from the verified session cookie (req.userId), never from query params.
  *
- * 1. Loads all connected-account tokens for this user from Firestore
+ * 1. Loads all connected-account tokens for this user from Firestore (decrypting them)
  * 2. For each account, calls Google Drive files.list using the stored tokens
- * 3. Auto-refreshes expired access tokens using the refresh token
+ * 3. Auto-refreshes expired access tokens using the refresh token (re-encrypting on save)
  * 4. Returns a merged, de-duped file list as JSON
  */
 exports.getFiles = async (req, res) => {
   try {
-    const { userId, folderId } = req.query;
-    if (!userId) {
-      return res.status(400).json({ error: 'Missing userId query parameter' });
-    }
+    const userId = req.userId;
+    const { folderId } = req.query;
 
     // 1. Verify user exists
     const userDoc = await db.collection('users').doc(userId).get();
@@ -51,20 +51,20 @@ exports.getFiles = async (req, res) => {
       );
 
       oauth2Client.setCredentials({
-        access_token: account.accessToken,
-        refresh_token: account.refreshToken,
+        access_token: decrypt(account.accessToken),
+        refresh_token: account.refreshToken ? decrypt(account.refreshToken) : undefined,
         expiry_date: account.expiryDate,
       });
 
-      // Listen for token refresh and persist new tokens
+      // Listen for token refresh and persist new tokens (encrypted)
       oauth2Client.on('tokens', async (newTokens) => {
         const update = {
-          accessToken: newTokens.access_token,
+          accessToken: encrypt(newTokens.access_token),
           expiryDate: newTokens.expiry_date,
         };
         // Only overwrite refreshToken if Google issued a new one
         if (newTokens.refresh_token) {
-          update.refreshToken = newTokens.refresh_token;
+          update.refreshToken = encrypt(newTokens.refresh_token);
         }
         await db
           .collection('users')

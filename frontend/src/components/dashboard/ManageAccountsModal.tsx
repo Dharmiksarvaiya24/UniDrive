@@ -18,7 +18,6 @@ interface ManageAccountsModalProps {
   isOpen: boolean
   onClose: () => void
   accounts: ConnectedAccount[]
-  userId: string | null
   onAccountRemoved: (accountId: string) => void
 }
 
@@ -33,7 +32,6 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
   isOpen,
   onClose,
   accounts,
-  userId,
   onAccountRemoved,
 }) => {
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -43,14 +41,13 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
   if (!isOpen) return null
 
   const handleRemove = async (accountId: string) => {
-    if (!userId) return
     setDeletingId(accountId)
     setStatusMessage(null)
 
     try {
       const res = await fetch(
-        `${API_BASE_URL}/api/accounts/${accountId}?userId=${userId}`,
-        { method: 'DELETE' }
+        `${API_BASE_URL}/api/accounts/${accountId}`,
+        { method: 'DELETE', credentials: 'include' }
       )
       const data = await res.json()
 
@@ -211,7 +208,7 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
 
             <div className="flex items-center gap-3">
               <a
-                href={`${API_BASE_URL}/auth/google?userId=${userId || localStorage.getItem('unidrive_userId') || ''}`}
+                href={`${API_BASE_URL}/auth/google`}
                 className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-xs font-semibold text-black transition-transform hover:scale-[1.02] active:scale-[0.98]"
               >
                 <FiPlus className="h-4 w-4" />

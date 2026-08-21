@@ -4,8 +4,9 @@ const {
   getAccounts,
   removeAccount,
 } = require('../controllers/accounts.controller');
+const { sessionMiddleware } = require('../middleware/session.middleware');
 
-router.get('/', getAccounts);
-router.delete('/:accountId', removeAccount);
+router.get('/', sessionMiddleware, getAccounts);
+router.delete('/:accountId', sessionMiddleware, removeAccount);
 
 module.exports = router;

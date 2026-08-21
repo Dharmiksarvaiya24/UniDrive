@@ -1,0 +1,16 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // UniDrive accesses Firestore exclusively through the backend Admin SDK,
+    // which bypasses these rules. Users authenticate via signed HTTP-only
+    // session cookies verified by the backend — never via Firebase Auth.
+    //
+    // Therefore: deny ALL direct client access. This prevents any client from
+    // reading another user's documents or touching connectedAccounts tokens.
+    // If Firebase Auth is added later, scope owner-only rules here.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
