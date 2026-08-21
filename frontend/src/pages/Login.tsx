@@ -1,31 +1,53 @@
 import React, { useState, useEffect } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import logo from '../assets/logo-drive.png'
 import { API_BASE_URL } from '../config/api'
 
 function Login() {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Tracks whether the initial session check is still in-flight
+  const [checkingSession, setCheckingSession] = useState(true)
+
+  // Display any error returned via ?error query param (e.g. from OAuth callback)
+  useEffect(() => {
+    const urlError = searchParams.get('error')
+    if (urlError) {
+      setError(decodeURIComponent(urlError))
+      // Clean the param from the URL without reloading
+      const params = new URLSearchParams(searchParams)
+      params.delete('error')
+      window.history.replaceState({}, '', params.toString() ? `?${params}` : window.location.pathname)
+    }
+  }, [searchParams])
 
   // If already logged in (valid session cookie), redirect to dashboard
   useEffect(() => {
+    let isMounted = true
     fetch(`${API_BASE_URL}/auth/session`, {
       credentials: 'include',
     })
-      .then((res) => {
-        if (res.ok) {
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!isMounted) return
+        if (data?.valid && data?.userId) {
           navigate('/dashboard', { replace: true })
         }
       })
       .catch(() => {
-        
+        // Not authenticated — show login form normally
       })
+      .finally(() => {
+        if (isMounted) setCheckingSession(false)
+      })
+    return () => { isMounted = false }
   }, [navigate])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -65,8 +87,7 @@ function Login() {
 
       if (mode === 'signup' && data.user?.id) {
         // Session cookie is set by the backend. Redirect to Google OAuth to
-        // request Drive access for the newly created account — the session
-        // cookie identifies the user, no userId in the URL needed.
+        // request Drive access for the newly created account.
         window.location.href = `${API_BASE_URL}/auth/google`
         return
       }
@@ -82,6 +103,21 @@ function Login() {
     } finally {
       setLoading(false)
     }
+  }
+
+
+
+  // Show a full-page spinner while verifying if the user already has a valid session.
+  // This prevents the login form from flashing briefly for authenticated users.
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#2AABEE] border-t-transparent" />
+          <p className="text-sm text-white/40">Checking session...</p>
+        </div>
+      </div>
+    )
   }
 
   return (

@@ -68,15 +68,37 @@ exports.googleLogin = (req, res) => {
   res.redirect(url);
 };
 
+// Map common Google OAuth error codes to user-readable messages (no internal detail leaked)
+const GOOGLE_ERROR_MESSAGES = {
+  access_denied: 'You declined Google permissions. Please try again and allow access to continue.',
+  redirect_uri_mismatch: 'OAuth configuration error. Please contact support.',
+  invalid_grant: 'This sign-in link has expired. Please try again.',
+  invalid_client: 'OAuth configuration error. Please contact support.',
+  server_error: 'Google encountered an error. Please try again.',
+};
+
 // Step 2: handle Google's redirect back with the code
 exports.googleCallback = async (req, res) => {
+  // Determine a safe return host early so we can redirect on any error
+  let returnHost = process.env.FRONTEND_URL || 'http://localhost:5173';
+
   try {
-    const { code, state } = req.query;
-    if (!code) return res.status(400).send('Missing authorization code');
+    const { code, state, error: googleError } = req.query;
+
+    // Handle errors returned directly from Google (e.g. access_denied)
+    if (googleError) {
+      const message = encodeURIComponent(
+        GOOGLE_ERROR_MESSAGES[googleError] || 'Google sign-in failed. Please try again.'
+      );
+      return res.redirect(`${returnHost}/login?error=${message}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${returnHost}/login?error=${encodeURIComponent('Missing authorization code. Please try signing in again.')}`);
+    }
 
     // Decode state
     let stateUserId = null;
-    let returnHost = process.env.FRONTEND_URL || 'http://localhost:5173';
 
     if (state) {
       try {
@@ -86,7 +108,7 @@ exports.googleCallback = async (req, res) => {
           returnHost = decoded.returnHost;
         }
       } catch {
-        // Legacy plain state — ignore for identity purposes
+        // Malformed state — proceed without userId (treat as fresh login)
       }
     }
 
@@ -100,7 +122,7 @@ exports.googleCallback = async (req, res) => {
     const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
     const { data: profile } = await oauth2.userinfo.get();
 
-    let userId = stateUserId;
+    let userId = stateUserId || null;
 
     if (!userId) {
       // Find or create the UniDrive user, keyed by their Google email
@@ -127,15 +149,16 @@ exports.googleCallback = async (req, res) => {
         }
       }
     } else {
-      // "Add account" flow: attach to existing verified user — verify it exists
+      // "Add account" flow: attach to existing verified user — verify it still exists
       const userDoc = await db.collection('users').doc(userId).get();
       if (!userDoc.exists) {
+        // Session's user no longer exists — treat as fresh login
         userId = null;
       }
     }
 
     if (!userId) {
-      return res.status(400).send('Invalid account context');
+      return res.redirect(`${returnHost}/login?error=${encodeURIComponent('Account context is invalid. Please sign in again.')}`);
     }
 
     // Save this connected account's tokens under the user safely (ENCRYPTED at rest)
@@ -165,8 +188,9 @@ exports.googleCallback = async (req, res) => {
     // Redirect back to the originating frontend dashboard — no tokens in URL
     res.redirect(`${returnHost}/dashboard`);
   } catch (err) {
-    console.error('OAuth callback error:', err);
-    res.status(500).send('Authentication failed');
+    // Log the real error internally but never expose details to the client
+    console.error('OAuth callback error:', err.message || err);
+    res.redirect(`${returnHost}/login?error=${encodeURIComponent('Sign-in failed. Please try again.')}`);
   }
 };
 
