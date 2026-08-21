@@ -37,26 +37,31 @@ function verifySessionToken(token) {
 }
 
 function getSessionCookieOptions() {
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.FRONTEND_URL && process.env.FRONTEND_URL.startsWith('https'));
   return {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite: isProduction ? 'none' : 'lax',
     maxAge: SESSION_EXPIRY_SECONDS * 1000,
     path: '/',
   };
 }
 
 function clearSessionCookieOptions() {
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.FRONTEND_URL && process.env.FRONTEND_URL.startsWith('https'));
   return {
     httpOnly: true,
     secure: isProduction,
-    sameSite: 'lax',
+    sameSite: isProduction ? 'none' : 'lax',
     maxAge: 0,
     path: '/',
   };
 }
+
 
 function setSessionCookie(res, userId) {
   const token = createSessionToken({ userId });

@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { Navigate, useLocation } from 'react-router-dom'
 import { API_BASE_URL } from '../../config/api'
-import NotFound from '../../pages/NotFound'
 
 interface ProtectedRouteProps {
   children: ReactNode
 }
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const location = useLocation()
   const [isValidating, setIsValidating] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
 
@@ -48,16 +49,17 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#2AABEE] border-t-transparent"></div>
-          <p className="text-sm text-white/50">Verifying...</p>
+          <p className="text-sm text-white/50">Verifying session...</p>
         </div>
       </div>
     )
   }
 
-  // If not authenticated, render 404 Page Not Found
+  // If not authenticated, redirect to /login rather than 404
   if (!isAuthenticated) {
-    return <NotFound />
+    return <Navigate to="/login" state={{ from: location }} replace />
   }
 
   return <>{children}</>
 }
+

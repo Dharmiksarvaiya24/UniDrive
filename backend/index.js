@@ -11,6 +11,9 @@ const accountsRoutes = require('./src/routes/accounts.routes');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Enable trust proxy for reverse proxies (Render, Cloudflare, Heroku)
+app.set('trust proxy', 1);
+
 // CORS: only allow the real frontend origins — never a wildcard.
 // credentials: true is required so the session cookie is sent cross-origin.
 const allowedOrigins = [
