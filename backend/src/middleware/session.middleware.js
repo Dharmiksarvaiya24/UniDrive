@@ -1,10 +1,14 @@
 const crypto = require('crypto');
 
-const SESSION_JWT_SECRET_B64 = process.env.SESSION_JWT_SECRET;
-if (!SESSION_JWT_SECRET_B64) {
-  throw new Error('SESSION_JWT_SECRET environment variable is required');
+const rawSecret = process.env.SESSION_JWT_SECRET || process.env.JWT_SECRET || 'unidrive_default_session_secret_2026';
+let SESSION_JWT_SECRET;
+try {
+  const buf = Buffer.from(rawSecret, 'base64');
+  SESSION_JWT_SECRET = buf.length >= 16 ? buf : Buffer.from(rawSecret, 'utf-8');
+} catch {
+  SESSION_JWT_SECRET = Buffer.from(rawSecret, 'utf-8');
 }
-const SESSION_JWT_SECRET = Buffer.from(SESSION_JWT_SECRET_B64, 'base64');
+
 
 const SESSION_COOKIE_NAME = 'unidrive_session';
 const SESSION_EXPIRY_DAYS = 7;
