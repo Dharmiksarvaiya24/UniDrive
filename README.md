@@ -20,7 +20,6 @@ Juggling multiple Google accounts usually means switching tabs, remembering whic
 - **One workspace, every account** — view and manage files across all your connected Google Drive accounts in a single explorer.
 - **Nothing is moved or duplicated** — UniDrive indexes your files; your data stays in its original account.
 - **Open source and self-hostable** — run it on your own infrastructure, full transparency, no vendor lock-in.
-- **Your data, your control** — credentials and access stay under your management, not a third party's.
 
 ---
 
