@@ -357,46 +357,21 @@ function Dashboard() {
           </button>
         </div>
 
-        {connectedAccounts.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setSelectedAccountEmail(null)}
-            className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
-              selectedAccountEmail === null
-                ? 'bg-white/10 text-white'
-                : 'text-white/40 hover:bg-white/5 hover:text-white/70'
-            }`}
-          >
-            <span>All accounts combined</span>
-            <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] text-white/60">
-              {connectedAccounts.length}
-            </span>
-          </button>
-        )}
-
         <div className="flex flex-col gap-1">
           {connectedAccounts.length > 0 ? (
             connectedAccounts.map((acc) => (
-              <button
-                type="button"
+              <div
                 key={acc.googleAccountId}
-                onClick={() =>
-                  setSelectedAccountEmail((prev) => (prev === acc.email ? null : acc.email))
-                }
-                className={`group flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors ${
-                  selectedAccountEmail === acc.email
-                    ? 'bg-accent/15 text-white ring-1 ring-accent/30'
-                    : 'text-white/60 hover:bg-white/5'
-                }`}
+                className="group flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm text-white/60"
               >
                 <div className="flex items-center gap-3 overflow-hidden text-left">
-                  <FaGoogleDrive className={`h-4 w-4 shrink-0 ${selectedAccountEmail === acc.email ? 'text-accent' : 'text-white/30'}`} />
+                  <FaGoogleDrive className="h-4 w-4 shrink-0 text-white/30" />
                   <span className="truncate">{acc.email}</span>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="h-2 w-2 rounded-full bg-green-400" />
                 </div>
-              </button>
+              </div>
             ))
           ) : (
             <p className="px-3 py-2 text-xs text-white/20">No accounts linked</p>
@@ -738,9 +713,6 @@ function Dashboard() {
                   <span className="hidden sm:inline">
                     {selectedAccountEmail ? selectedAccountEmail.split('@')[0] : 'All Accounts'}
                   </span>
-                  {selectedAccountEmail && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse sm:hidden" />
-                  )}
                 </button>
 
                 <AnimatePresence>
