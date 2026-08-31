@@ -1,5 +1,5 @@
 const PRODUCTION_API_BASE_URL =
-  'https://vercel.com/dharmiksarvaiya24s-projects/uni-drive/7aWyGd8s9uiE1XMhtfgydtry7f1s'
+  'https://uni-drive-one.vercel.app'
 
 const isLocalhost =
   typeof window !== 'undefined' &&
