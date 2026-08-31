@@ -28,7 +28,7 @@ import { MacFileIcon } from '../components/dashboard/MacFileIcon'
 import { FilePreviewModal } from '../components/common/FilePreviewModal'
 import { ManageAccountsModal } from '../components/dashboard/ManageAccountsModal'
 import { API_BASE_URL } from '../config/api'
-import { authFetch, captureHashToken, clearSessionToken } from '../utils/auth'
+import { authFetch, clearSessionToken } from '../utils/auth'
 
 /* ─── Types ─── */
 interface DriveFile {
@@ -127,9 +127,8 @@ function Dashboard() {
 
   const currentFolder = folderBreadcrumbs.length > 0 ? folderBreadcrumbs[folderBreadcrumbs.length - 1] : null
 
-  // Fetch and verify user profile via session token / cookie
+  // Fetch user profile — session is already validated by ProtectedRoute
   useEffect(() => {
-    captureHashToken()
     authFetch(`${API_BASE_URL}/auth/session`)
       .then((res) => {
         if (!res.ok) throw new Error('Unauthorized')
@@ -141,16 +140,12 @@ function Dashboard() {
           if (data.user?.name) setUserName(data.user.name)
           if (data.user?.email) setUserEmail(data.user.email)
           if (data.user?.picture) setUserPicture(data.user.picture)
-        } else {
-          throw new Error('Invalid user session')
         }
       })
       .catch((err) => {
-        console.error('Failed to verify user session:', err)
-        clearSessionToken()
-        navigate('/login', { replace: true })
+        console.error('Failed to fetch user profile:', err)
       })
-  }, [navigate])
+  }, [])
 
   // Fetch root files from backend
   useEffect(() => {
