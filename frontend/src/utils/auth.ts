@@ -1,4 +1,18 @@
-
+/**
+ * Shared authentication utilities for UniDrive.
+ *
+ * Problem:  Frontend (dharmik.live) and backend (vercel.com) are on different
+ *           domains. Modern browsers silently block cross-site cookies even when
+ *           SameSite=None + Secure is set correctly.
+ *
+ * Solution: After OAuth, the backend passes the signed session JWT in the URL
+ *           hash fragment (never sent to any server, safe from Referer leaks).
+ *           The frontend stores it in sessionStorage and sends it via the
+ *           Authorization: Bearer header on every API call.
+ *
+ *           Cookies are still set as a fallback (they work on same-domain
+ *           deploys and for browsers that haven't restricted cross-site cookies).
+ */
 
 const TOKEN_KEY = 'unidrive_session_token'
 
