@@ -5,4 +5,4 @@ const isLocalhost =
 
 export const API_BASE_URL = isLocalhost
   ? (import.meta.env.VITE_LOCAL_API_URL || 'http://localhost:5001')
-  : (import.meta.env.VITE_API_URL || 'https://unidrive-7sze.onrender.com')
+  : (import.meta.env.VITE_API_URL || 'https://vercel.com/dharmiksarvaiya24s-projects/uni-drive/7aWyGd8s9uiE1XMhtfgydtry7f1s')
