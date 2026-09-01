@@ -7,8 +7,12 @@
  *
  * Solution: After OAuth, the backend passes the signed session JWT in the URL
  *           hash fragment (never sent to any server, safe from Referer leaks).
- *           The frontend stores it in sessionStorage and sends it via the
+ *           The frontend stores it in localStorage and sends it via the
  *           Authorization: Bearer header on every API call.
+ *
+ *           We use localStorage (not sessionStorage) because sessionStorage is
+ *           tab-scoped and can be unreliable across OAuth redirect chains,
+ *           especially on mobile browsers and some incognito modes.
  *
  *           Cookies are still set as a fallback (they work on same-domain
  *           deploys and for browsers that haven't restricted cross-site cookies).
@@ -16,28 +20,40 @@
 
 const TOKEN_KEY = 'unidrive_session_token'
 
-/** Read the session JWT from sessionStorage (returns null if absent). */
+// One-time migration: move token from sessionStorage → localStorage so existing
+// sessions survive the storage backend change.
+try {
+  const legacy = sessionStorage.getItem(TOKEN_KEY)
+  if (legacy && !localStorage.getItem(TOKEN_KEY)) {
+    localStorage.setItem(TOKEN_KEY, legacy)
+    sessionStorage.removeItem(TOKEN_KEY)
+  }
+} catch {
+  // noop — storage may not be available
+}
+
+/** Read the session JWT from localStorage (returns null if absent). */
 export function getSessionToken(): string | null {
   try {
-    return sessionStorage.getItem(TOKEN_KEY)
+    return localStorage.getItem(TOKEN_KEY)
   } catch {
     return null
   }
 }
 
-/** Persist a session JWT to sessionStorage. */
+/** Persist a session JWT to localStorage. */
 export function setSessionToken(token: string): void {
   try {
-    sessionStorage.setItem(TOKEN_KEY, token)
+    localStorage.setItem(TOKEN_KEY, token)
   } catch {
-    // sessionStorage may be unavailable in incognito in some browsers
+    // localStorage may be unavailable in some restricted browser modes
   }
 }
 
-/** Remove the session JWT from sessionStorage (used on logout). */
+/** Remove the session JWT from localStorage (used on logout). */
 export function clearSessionToken(): void {
   try {
-    sessionStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(TOKEN_KEY)
   } catch {
     // noop
   }
@@ -74,12 +90,17 @@ export function captureHashToken(): string | null {
  * A drop-in replacement for fetch() that automatically includes:
  *   - credentials: 'include'  (for same-domain cookie auth)
  *   - Authorization: Bearer <token>  (for cross-domain token auth)
+ *
+ * @param overrideToken  If provided, use this token instead of reading from
+ *                       storage. Useful right after captureHashToken() to avoid
+ *                       any storage timing issues.
  */
 export function authFetch(
   url: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  overrideToken?: string | null
 ): Promise<Response> {
-  const token = getSessionToken()
+  const token = overrideToken ?? getSessionToken()
 
   const headers = new Headers(options.headers)
   if (token && !headers.has('Authorization')) {

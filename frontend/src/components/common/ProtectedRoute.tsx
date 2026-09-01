@@ -15,10 +15,14 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   useEffect(() => {
     let isMounted = true
 
-    // Capture token from hash fragment if redirected from OAuth (e.g. #session=xyz)
-    captureHashToken()
+    // Capture token from hash fragment if redirected from OAuth (e.g. #session=xyz).
+    // captureHashToken() stores it in localStorage AND returns it so we can pass it
+    // directly to authFetch — this avoids any storage read-back timing issues.
+    const hashToken = captureHashToken()
 
-    authFetch(`${API_BASE_URL}/auth/session`)
+    // Pass the just-captured token as an override so authFetch uses it immediately
+    // rather than depending on a localStorage round-trip.
+    authFetch(`${API_BASE_URL}/auth/session`, {}, hashToken)
       .then((res) => {
         if (!isMounted) return
         if (!res.ok) throw new Error('Unauthorized')

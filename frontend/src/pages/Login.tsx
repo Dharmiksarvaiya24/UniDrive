@@ -34,9 +34,9 @@ function Login() {
     let isMounted = true
 
     // Capture token from hash fragment if present (e.g. #session=...)
-    captureHashToken()
+    const hashToken = captureHashToken()
 
-    authFetch(`${API_BASE_URL}/auth/session`)
+    authFetch(`${API_BASE_URL}/auth/session`, {}, hashToken)
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
         if (!isMounted) return
