@@ -94,7 +94,7 @@ function Login() {
       if (mode === 'signup' && data.user?.id) {
         // Session cookie/token is set by the backend. Redirect to Google OAuth to
         // request Drive access for the newly created account.
-        window.location.href = `${API_BASE_URL}/auth/google`
+        window.location.href = `${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(window.location.origin)}`
         return
       }
 
@@ -249,7 +249,7 @@ function Login() {
           </div>
 
           <a
-            href={`${API_BASE_URL}/auth/google`}
+            href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(window.location.origin)}`}
             className="flex w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-white/10"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5">

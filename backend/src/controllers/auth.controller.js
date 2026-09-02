@@ -20,15 +20,58 @@ const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null,
   'https://unidrive.dharmik.live',
+  'https://www.unidrive.dharmik.live',
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'http://localhost:4173',
+  'http://127.0.0.1:4173',
+  'http://localhost:3000',
 ].filter(Boolean);
 
-function getOAuth2Client() {
+function isLocalRequest(req) {
+  if (!req) return false;
+  const host = req.headers?.['x-forwarded-host'] || req.get?.('host') || '';
+  const referer = req.headers?.referer || req.headers?.origin || '';
+  return (
+    host.includes('localhost') ||
+    host.includes('127.0.0.1') ||
+    referer.includes('localhost') ||
+    referer.includes('127.0.0.1')
+  );
+}
+
+function getOAuth2RedirectUri(req) {
+  const isLocal = isLocalRequest(req);
+
+  if (isLocal) {
+    if (process.env.LOCAL_GOOGLE_REDIRECT_URI) {
+      return process.env.LOCAL_GOOGLE_REDIRECT_URI;
+    }
+    if (process.env.GOOGLE_REDIRECT_URI && (process.env.GOOGLE_REDIRECT_URI.includes('localhost') || process.env.GOOGLE_REDIRECT_URI.includes('127.0.0.1'))) {
+      return process.env.GOOGLE_REDIRECT_URI;
+    }
+    return 'http://localhost:5001/auth/google/callback';
+  }
+
+  // Production:
+  // If explicitly configured with a non-localhost redirect URI, honor it
+  if (
+    process.env.GOOGLE_REDIRECT_URI &&
+    !process.env.GOOGLE_REDIRECT_URI.includes('localhost') &&
+    !process.env.GOOGLE_REDIRECT_URI.includes('127.0.0.1')
+  ) {
+    return process.env.GOOGLE_REDIRECT_URI;
+  }
+
+  // Default production redirect URI registered in Google Cloud Console
+  return 'https://unidrive.dharmik.live/auth/google/callback';
+}
+
+function getOAuth2Client(customRedirectUri) {
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
+    customRedirectUri || getOAuth2RedirectUri()
   );
 }
 
@@ -54,21 +97,31 @@ exports.googleLogin = (req, res) => {
   const verifiedUserId = decoded?.userId || null;
 
   const requestedHost = req.query.redirectUrl;
-  const referer = req.headers.referer || req.headers.origin || '';
-  const isLocal = referer.includes('localhost') || referer.includes('127.0.0.1');
-  const defaultHost = isLocal ? 'http://localhost:5173' : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live');
+  const isLocal = isLocalRequest(req);
+  const defaultHost = isLocal
+    ? 'http://localhost:5173'
+    : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live');
 
   // Only allow known-good origins in the state payload (prevents open redirect)
   let returnHost = defaultHost.replace(/\/$/, '');
-  if (requestedHost && ALLOWED_ORIGINS.includes(requestedHost)) {
-    returnHost = requestedHost.replace(/\/$/, '');
+  if (requestedHost) {
+    const cleanRequested = requestedHost.replace(/\/$/, '');
+    if (ALLOWED_ORIGINS.includes(cleanRequested)) {
+      returnHost = cleanRequested;
+    }
   }
 
+  const redirectUri = getOAuth2RedirectUri(req);
+
   const statePayload = Buffer.from(
-    JSON.stringify({ userId: verifiedUserId || '', returnHost })
+    JSON.stringify({
+      userId: verifiedUserId || '',
+      returnHost,
+      redirectUri,
+    })
   ).toString('base64');
 
-  const oauth2Client = getOAuth2Client();
+  const oauth2Client = getOAuth2Client(redirectUri);
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent select_account',
@@ -90,11 +143,32 @@ const GOOGLE_ERROR_MESSAGES = {
 
 // Step 2: handle Google's redirect back with the code
 exports.googleCallback = async (req, res) => {
+  const isLocal = isLocalRequest(req);
   // Determine a safe return host early so we can redirect on any error
-  let returnHost = (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live').replace(/\/$/, '');
+  let returnHost = (isLocal ? 'http://localhost:5173' : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live')).replace(/\/$/, '');
 
   try {
     const { code, state, error: googleError } = req.query;
+
+    // Decode state early so returnHost and redirectUri are accurate
+    let stateUserId = null;
+    let stateRedirectUri = null;
+
+    if (state) {
+      try {
+        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
+        stateUserId = decoded.userId || null;
+        stateRedirectUri = decoded.redirectUri || null;
+        if (decoded.returnHost) {
+          const cleanReturn = decoded.returnHost.replace(/\/$/, '');
+          if (ALLOWED_ORIGINS.includes(cleanReturn)) {
+            returnHost = cleanReturn;
+          }
+        }
+      } catch {
+        // Malformed state — proceed without userId (treat as fresh login)
+      }
+    }
 
     // Handle errors returned directly from Google (e.g. access_denied)
     if (googleError) {
@@ -108,22 +182,8 @@ exports.googleCallback = async (req, res) => {
       return res.redirect(`${returnHost}/login?error=${encodeURIComponent('Missing authorization code. Please try signing in again.')}`);
     }
 
-    // Decode state
-    let stateUserId = null;
-
-    if (state) {
-      try {
-        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
-        stateUserId = decoded.userId || null;
-        if (decoded.returnHost && ALLOWED_ORIGINS.includes(decoded.returnHost)) {
-          returnHost = decoded.returnHost.replace(/\/$/, '');
-        }
-      } catch {
-        // Malformed state — proceed without userId (treat as fresh login)
-      }
-    }
-
-    const oauth2Client = getOAuth2Client();
+    const redirectUri = stateRedirectUri || getOAuth2RedirectUri(req);
+    const oauth2Client = getOAuth2Client(redirectUri);
 
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);

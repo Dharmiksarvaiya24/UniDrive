@@ -865,7 +865,7 @@ function Dashboard() {
                   </p>
                 </div>
                 <a
-                  href={`${API_BASE_URL}/auth/google`}
+                  href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(window.location.origin)}`}
                   className="mt-2 inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-accent/80 hover:shadow-lg hover:shadow-accent/20"
                 >
                   <FaGoogleDrive className="h-4 w-4" />

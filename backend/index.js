@@ -17,9 +17,15 @@ app.set('trust proxy', 1);
 // CORS: only allow the real frontend origins — never a wildcard.
 // credentials: true is required so the session cookie is sent cross-origin.
 const allowedOrigins = [
-  process.env.FRONTEND_URL || 'https://unidrive.dharmik.live',
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null,
+  'https://unidrive.dharmik.live',
+  'https://www.unidrive.dharmik.live',
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'http://localhost:4173',
+  'http://127.0.0.1:4173',
+  'http://localhost:3000',
 ].filter(Boolean);
 
 app.use(
