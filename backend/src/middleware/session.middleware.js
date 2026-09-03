@@ -90,6 +90,11 @@ function sessionMiddleware(req, res, next) {
     }
   }
 
+  // 3. Fall back to query param (e.g. for media streaming, iframes, downloads)
+  if (!token && req.query?.token) {
+    token = req.query.token;
+  }
+
   if (!token) {
     return res.status(401).json({ error: 'Authentication required. No session.' });
   }

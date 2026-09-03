@@ -520,6 +520,9 @@ function Dashboard() {
       <FilePreviewModal
         fileId={selectedFile?.id}
         fileName={selectedFile?.name}
+        mimeType={selectedFile?.mimeType}
+        size={selectedFile?.size}
+        accountId={selectedFile?.accountId}
         webViewLink={selectedFile?.webViewLink}
         accountEmail={selectedFile?.accountEmail}
         isOpen={!!selectedFile}

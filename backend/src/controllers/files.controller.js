@@ -2,6 +2,375 @@ const { google } = require('googleapis');
 const { db } = require('../config/firebase');
 const { decrypt, encrypt } = require('../utils/encryption');
 
+// In-memory cache for resolved Drive clients & file metadata
+const fileInfoCache = new Map();
+const FILE_INFO_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+// In-memory buffer cache for PDFs (standard PDFs and exported Google Docs)
+const pdfBufferCache = new Map();
+const PDF_BUFFER_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+/**
+ * Creates an authorized OAuth2 Google Drive client for a given account doc
+ * with auto-refresh token persistence.
+ */
+function createOAuth2ClientForAccount(userId, accountDoc) {
+  const account = accountDoc.data();
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  oauth2Client.setCredentials({
+    access_token: decrypt(account.accessToken),
+    refresh_token: account.refreshToken ? decrypt(account.refreshToken) : undefined,
+    expiry_date: account.expiryDate,
+  });
+
+  // Persist auto-refreshed access tokens
+  oauth2Client.on('tokens', async (newTokens) => {
+    try {
+      const update = {
+        accessToken: encrypt(newTokens.access_token),
+        expiryDate: newTokens.expiry_date,
+      };
+      if (newTokens.refresh_token) {
+        update.refreshToken = encrypt(newTokens.refresh_token);
+      }
+      await db
+        .collection('users')
+        .doc(userId)
+        .collection('connectedAccounts')
+        .doc(accountDoc.id)
+        .update(update);
+    } catch (err) {
+      console.warn('Failed to persist refreshed tokens:', err.message);
+    }
+  });
+
+  return google.drive({ version: 'v3', auth: oauth2Client });
+}
+
+/**
+ * Locates the connected account that has access to the requested file.
+ * Uses an in-memory cache to avoid redundant Firestore reads and Drive API calls.
+ */
+async function findDriveForFile(userId, fileId, preferredAccountId) {
+  const cacheKey = `${userId}:${fileId}`;
+  const cached = fileInfoCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  const accountsSnap = await db
+    .collection('users')
+    .doc(userId)
+    .collection('connectedAccounts')
+    .get();
+
+  if (accountsSnap.empty) {
+    return null;
+  }
+
+  let preferredDoc = null;
+  const otherDocs = [];
+
+  for (const doc of accountsSnap.docs) {
+    const data = doc.data();
+    if (
+      preferredAccountId &&
+      (data.googleAccountId === preferredAccountId ||
+        doc.id === preferredAccountId ||
+        data.email === preferredAccountId)
+    ) {
+      preferredDoc = doc;
+    } else {
+      otherDocs.push(doc);
+    }
+  }
+
+  const docsToTry = preferredDoc ? [preferredDoc, ...otherDocs] : otherDocs;
+
+  for (const accountDoc of docsToTry) {
+    try {
+      const drive = createOAuth2ClientForAccount(userId, accountDoc);
+      const metaRes = await drive.files.get({
+        fileId,
+        fields: 'id, name, mimeType, size, webViewLink',
+      });
+      if (metaRes.data && metaRes.data.id) {
+        const result = {
+          drive,
+          file: metaRes.data,
+          account: accountDoc.data(),
+          expiresAt: Date.now() + FILE_INFO_CACHE_TTL,
+        };
+        fileInfoCache.set(cacheKey, result);
+        return result;
+      }
+    } catch (err) {
+      if (err.code !== 404 && err.status !== 404) {
+        console.warn(`Drive check error on ${accountDoc.data().email}:`, err.message);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Common handler to stream or download a file from Google Drive using the
+ * user's stored OAuth credentials, bypassing Google login requirements.
+ */
+async function streamFile(req, res, { isDownload = false }) {
+  try {
+    const userId = req.userId;
+    const { fileId } = req.params;
+    const { accountId } = req.query;
+
+    if (!fileId) {
+      return res.status(400).json({ error: 'Missing fileId parameter' });
+    }
+
+    const dispositionType = isDownload ? 'attachment' : 'inline';
+
+    // Fast path: Check in-memory PDF buffer cache for instant 0ms responses
+    const cachedPdf = pdfBufferCache.get(fileId);
+    if (cachedPdf && cachedPdf.expiresAt > Date.now()) {
+      const buffer = cachedPdf.buffer;
+      const total = buffer.length;
+      const filename = cachedPdf.filename;
+
+      res.setHeader('Content-Type', cachedPdf.mimeType || 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      const range = req.headers.range;
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+        if (start < total && end < total && start <= end) {
+          const chunksize = end - start + 1;
+          res.status(206);
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+          res.setHeader('Content-Length', chunksize);
+          return res.end(buffer.subarray(start, end + 1));
+        }
+      }
+
+      res.setHeader('Content-Length', total);
+      return res.end(buffer);
+    }
+
+    const driveInfo = await findDriveForFile(userId, fileId, accountId);
+    if (!driveInfo) {
+      return res.status(404).json({ error: 'File not found or access denied' });
+    }
+
+    const { drive, file } = driveInfo;
+
+    // 1. Google Workspace Document (Docs, Sheets, Slides, Drawings)
+    if (file.mimeType && file.mimeType.startsWith('application/vnd.google-apps.')) {
+      let exportMimeType = 'application/pdf';
+      let extension = '.pdf';
+
+      if (isDownload) {
+        if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+          exportMimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+          extension = '.xlsx';
+        } else if (file.mimeType === 'application/vnd.google-apps.presentation') {
+          exportMimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+          extension = '.pptx';
+        } else if (file.mimeType === 'application/vnd.google-apps.drawing') {
+          exportMimeType = 'image/png';
+          extension = '.png';
+        }
+      }
+
+      const baseName = file.name || 'document';
+      const filename = baseName.toLowerCase().endsWith(extension) ? baseName : `${baseName}${extension}`;
+
+      const exportRes = await drive.files.export(
+        { fileId, mimeType: exportMimeType },
+        { responseType: 'stream' }
+      );
+
+      // Buffer Google Docs exported to PDF for instant subsequent page loading
+      if (exportMimeType === 'application/pdf') {
+        const chunks = [];
+        exportRes.data.on('data', (c) => chunks.push(c));
+        exportRes.data.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          pdfBufferCache.set(fileId, {
+            buffer,
+            mimeType: exportMimeType,
+            filename,
+            expiresAt: Date.now() + PDF_BUFFER_CACHE_TTL,
+          });
+
+          res.setHeader(
+            'Content-Disposition',
+            `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+          );
+          res.setHeader('Content-Type', exportMimeType);
+          res.setHeader('Content-Length', buffer.length);
+          res.setHeader('Cache-Control', 'private, max-age=86400');
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.end(buffer);
+        });
+
+        exportRes.data.on('error', (err) => {
+          console.error('Export buffer error:', err.message);
+          if (!res.headersSent) res.status(500).json({ error: 'Failed to export document' });
+        });
+        return;
+      }
+
+      // Non-PDF exports (sheets xlsx, slides pptx)
+      res.setHeader(
+        'Content-Disposition',
+        `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.setHeader('Content-Type', exportMimeType);
+
+      req.on('close', () => {
+        if (exportRes.data && typeof exportRes.data.destroy === 'function') {
+          exportRes.data.destroy();
+        }
+      });
+
+      exportRes.data.on('error', (err) => {
+        console.error('Export stream error:', err.message);
+        if (!res.headersSent) res.status(500).json({ error: 'Failed to stream exported document' });
+      });
+
+      return exportRes.data.pipe(res);
+    }
+
+    const filename = file.name || 'file';
+
+    // 2. Standard PDF file optimization: buffer in memory to eliminate preview lag
+    if (file.mimeType === 'application/pdf' && (!file.size || file.size <= 25 * 1024 * 1024)) {
+      const streamRes = await drive.files.get(
+        { fileId, alt: 'media' },
+        { responseType: 'stream' }
+      );
+
+      const chunks = [];
+      streamRes.data.on('data', (c) => chunks.push(c));
+      streamRes.data.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        pdfBufferCache.set(fileId, {
+          buffer,
+          mimeType: 'application/pdf',
+          filename,
+          expiresAt: Date.now() + PDF_BUFFER_CACHE_TTL,
+        });
+
+        const total = buffer.length;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+          'Content-Disposition',
+          `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        );
+        res.setHeader('Cache-Control', 'private, max-age=86400');
+        res.setHeader('Accept-Ranges', 'bytes');
+
+        const range = req.headers.range;
+        if (range) {
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+          if (start < total && end < total && start <= end) {
+            const chunksize = end - start + 1;
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+            res.setHeader('Content-Length', chunksize);
+            return res.end(buffer.subarray(start, end + 1));
+          }
+        }
+
+        res.setHeader('Content-Length', total);
+        res.end(buffer);
+      });
+
+      streamRes.data.on('error', (err) => {
+        console.error('PDF buffer error:', err.message);
+        if (!res.headersSent) res.status(500).json({ error: 'Failed to load PDF' });
+      });
+      return;
+    }
+
+    // 3. Other standard binary files (images, videos, audio, text, zip, etc.)
+    const getOptions = { responseType: 'stream' };
+    if (req.headers.range) {
+      getOptions.headers = { Range: req.headers.range };
+    }
+
+    const streamRes = await drive.files.get(
+      { fileId, alt: 'media' },
+      getOptions
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    );
+    res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+
+    if (streamRes.status === 206 || streamRes.headers?.['content-range']) {
+      res.status(206);
+      if (streamRes.headers['content-range']) res.setHeader('Content-Range', streamRes.headers['content-range']);
+      if (streamRes.headers['accept-ranges']) res.setHeader('Accept-Ranges', streamRes.headers['accept-ranges']);
+      if (streamRes.headers['content-length']) res.setHeader('Content-Length', streamRes.headers['content-length']);
+    } else if (file.size) {
+      res.setHeader('Content-Length', file.size);
+      res.setHeader('Accept-Ranges', 'bytes');
+    }
+
+    req.on('close', () => {
+      if (streamRes.data && typeof streamRes.data.destroy === 'function') {
+        streamRes.data.destroy();
+      }
+    });
+
+    streamRes.data.on('error', (err) => {
+      console.error('Drive file stream error:', err.message);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to stream file' });
+    });
+
+    return streamRes.data.pipe(res);
+  } catch (err) {
+    console.error('Stream/Download error:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to access file' });
+    }
+  }
+}
+
+/**
+ * GET /api/files/:fileId/preview
+ * Streams file content inline for in-browser preview without requiring Google login.
+ */
+exports.previewFile = async (req, res) => {
+  await streamFile(req, res, { isDownload: false });
+};
+
+/**
+ * GET /api/files/:fileId/download
+ * Streams file as attachment for direct download without requiring Google login.
+ */
+exports.downloadFile = async (req, res) => {
+  await streamFile(req, res, { isDownload: true });
+};
+
 /**
  * GET /api/files?folderId=X
  * userId comes from the verified session cookie (req.userId), never from query params.
@@ -43,39 +412,8 @@ exports.getFiles = async (req, res) => {
       const account = accountDoc.data();
       let accountStorage = null;
 
-      // Create a fresh OAuth2 client for this account
-      const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET,
-        process.env.GOOGLE_REDIRECT_URI
-      );
-
-      oauth2Client.setCredentials({
-        access_token: decrypt(account.accessToken),
-        refresh_token: account.refreshToken ? decrypt(account.refreshToken) : undefined,
-        expiry_date: account.expiryDate,
-      });
-
-      // Listen for token refresh and persist new tokens (encrypted)
-      oauth2Client.on('tokens', async (newTokens) => {
-        const update = {
-          accessToken: encrypt(newTokens.access_token),
-          expiryDate: newTokens.expiry_date,
-        };
-        // Only overwrite refreshToken if Google issued a new one
-        if (newTokens.refresh_token) {
-          update.refreshToken = encrypt(newTokens.refresh_token);
-        }
-        await db
-          .collection('users')
-          .doc(userId)
-          .collection('connectedAccounts')
-          .doc(accountDoc.id)
-          .update(update);
-      });
-
       try {
-        const drive = google.drive({ version: 'v3', auth: oauth2Client });
+        const drive = createOAuth2ClientForAccount(userId, accountDoc);
 
         // Fetch Storage Quota for this account
         try {
@@ -133,7 +471,6 @@ exports.getFiles = async (req, res) => {
           `Drive API error for account ${account.email}:`,
           driveErr.message
         );
-        // Don't fail the entire request if one account errors — skip it
       }
 
       accountsList.push({
