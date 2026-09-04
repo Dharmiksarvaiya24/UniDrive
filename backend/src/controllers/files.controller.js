@@ -120,6 +120,16 @@ async function findDriveForFile(userId, fileId, preferredAccountId) {
 }
 
 /**
+ * Formats a standard RFC 6266 Content-Disposition header with ASCII fallback
+ * and UTF-8 encoded filename to support special characters across all browsers.
+ */
+function formatContentDisposition(dispositionType, filename) {
+  const safeAscii = (filename || 'file').replace(/["\r\n\\]/g, '_').replace(/[^\x20-\x7E]/g, '_');
+  const encoded = encodeURIComponent(filename || 'file').replace(/['()]/g, escape).replace(/\*/g, '%2A');
+  return `${dispositionType}; filename="${safeAscii}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
  * Common handler to stream or download a file from Google Drive using the
  * user's stored OAuth credentials, bypassing Google login requirements.
  */
@@ -135,37 +145,37 @@ async function streamFile(req, res, { isDownload = false }) {
 
     const dispositionType = isDownload ? 'attachment' : 'inline';
 
-    // Fast path: Check in-memory PDF buffer cache for instant 0ms responses
+    // Fast path: Check in-memory PDF buffer cache for instant 0ms responses.
+    // For downloads, only use cached PDF if it is a genuine PDF (not an exported Google Doc/Sheet/Slide).
     const cachedPdf = pdfBufferCache.get(fileId);
     if (cachedPdf && cachedPdf.expiresAt > Date.now()) {
-      const buffer = cachedPdf.buffer;
-      const total = buffer.length;
-      const filename = cachedPdf.filename;
+      if (!isDownload || !cachedPdf.isGoogleApp) {
+        const buffer = cachedPdf.buffer;
+        const total = buffer.length;
+        const filename = cachedPdf.filename;
 
-      res.setHeader('Content-Type', cachedPdf.mimeType || 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-      );
-      res.setHeader('Cache-Control', 'private, max-age=86400');
-      res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Type', cachedPdf.mimeType || 'application/pdf');
+        res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
+        res.setHeader('Cache-Control', 'private, max-age=86400');
+        res.setHeader('Accept-Ranges', 'bytes');
 
-      const range = req.headers.range;
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
-        if (start < total && end < total && start <= end) {
-          const chunksize = end - start + 1;
-          res.status(206);
-          res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-          res.setHeader('Content-Length', chunksize);
-          return res.end(buffer.subarray(start, end + 1));
+        const range = req.headers.range;
+        if (range) {
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+          if (start < total && end < total && start <= end) {
+            const chunksize = end - start + 1;
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+            res.setHeader('Content-Length', chunksize);
+            return res.end(buffer.subarray(start, end + 1));
+          }
         }
-      }
 
-      res.setHeader('Content-Length', total);
-      return res.end(buffer);
+        res.setHeader('Content-Length', total);
+        return res.end(buffer);
+      }
     }
 
     const driveInfo = await findDriveForFile(userId, fileId, accountId);
@@ -175,13 +185,21 @@ async function streamFile(req, res, { isDownload = false }) {
 
     const { drive, file } = driveInfo;
 
+    // Folders cannot be streamed or downloaded as a single file
+    if (file.mimeType === 'application/vnd.google-apps.folder' || file.mimeType === 'folder') {
+      return res.status(400).json({ error: 'Folders cannot be streamed or downloaded directly' });
+    }
+
     // 1. Google Workspace Document (Docs, Sheets, Slides, Drawings)
     if (file.mimeType && file.mimeType.startsWith('application/vnd.google-apps.')) {
       let exportMimeType = 'application/pdf';
       let extension = '.pdf';
 
       if (isDownload) {
-        if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
+        if (file.mimeType === 'application/vnd.google-apps.document') {
+          exportMimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+          extension = '.docx';
+        } else if (file.mimeType === 'application/vnd.google-apps.spreadsheet') {
           exportMimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
           extension = '.xlsx';
         } else if (file.mimeType === 'application/vnd.google-apps.presentation') {
@@ -211,13 +229,11 @@ async function streamFile(req, res, { isDownload = false }) {
             buffer,
             mimeType: exportMimeType,
             filename,
+            isGoogleApp: true,
             expiresAt: Date.now() + PDF_BUFFER_CACHE_TTL,
           });
 
-          res.setHeader(
-            'Content-Disposition',
-            `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-          );
+          res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
           res.setHeader('Content-Type', exportMimeType);
           res.setHeader('Content-Length', buffer.length);
           res.setHeader('Cache-Control', 'private, max-age=86400');
@@ -232,11 +248,8 @@ async function streamFile(req, res, { isDownload = false }) {
         return;
       }
 
-      // Non-PDF exports (sheets xlsx, slides pptx)
-      res.setHeader(
-        'Content-Disposition',
-        `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-      );
+      // Non-PDF exports (docs docx, sheets xlsx, slides pptx, drawings png)
+      res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
       res.setHeader('Content-Type', exportMimeType);
 
       req.on('close', () => {
@@ -270,15 +283,13 @@ async function streamFile(req, res, { isDownload = false }) {
           buffer,
           mimeType: 'application/pdf',
           filename,
+          isGoogleApp: false,
           expiresAt: Date.now() + PDF_BUFFER_CACHE_TTL,
         });
 
         const total = buffer.length;
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader(
-          'Content-Disposition',
-          `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-        );
+        res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
         res.setHeader('Cache-Control', 'private, max-age=86400');
         res.setHeader('Accept-Ranges', 'bytes');
 
@@ -318,10 +329,7 @@ async function streamFile(req, res, { isDownload = false }) {
       getOptions
     );
 
-    res.setHeader(
-      'Content-Disposition',
-      `${dispositionType}; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`
-    );
+    res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
     res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
     res.setHeader('Cache-Control', 'private, max-age=86400');
 

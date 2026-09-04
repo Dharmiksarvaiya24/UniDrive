@@ -22,6 +22,7 @@ import {
   FiFilter,
   FiCheck,
   FiRefreshCw,
+  FiDownload,
 } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { MacFileIcon } from '../components/dashboard/MacFileIcon'
@@ -29,6 +30,7 @@ import { FilePreviewModal } from '../components/common/FilePreviewModal'
 import { ManageAccountsModal } from '../components/dashboard/ManageAccountsModal'
 import { API_BASE_URL } from '../config/api'
 import { authFetch, clearSessionToken } from '../utils/auth'
+import { triggerDownload } from '../utils/download'
 
 /* ─── Types ─── */
 interface DriveFile {
@@ -905,6 +907,7 @@ function Dashboard() {
               >
                 {filteredFiles.map((file, i) => {
                   const subtitle = getFileSubtitle(file)
+                  const isFolder = file.mimeType === 'application/vnd.google-apps.folder' || file.mimeType === 'folder'
                   return (
                     <motion.div
                       key={file.id}
@@ -921,8 +924,23 @@ function Dashboard() {
                       initial={{ opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{ duration: 0.25, delay: Math.min(i * 0.02, 0.6) }}
-                      className="group flex cursor-pointer flex-col items-center rounded-xl p-2.5 transition-all hover:bg-white/[0.08] hover:shadow-lg hover:shadow-black/30 focus:outline-none focus:ring-1 focus:ring-accent"
+                      className="group relative flex cursor-pointer flex-col items-center rounded-xl p-2.5 transition-all hover:bg-white/[0.08] hover:shadow-lg hover:shadow-black/30 focus:outline-none focus:ring-1 focus:ring-accent"
                     >
+                      {/* Download Button Overlay (Files only) */}
+                      {!isFolder && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            triggerDownload(file.id, file.name, file.accountId)
+                          }}
+                          title={`Download ${file.name}`}
+                          className="absolute top-2 right-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg bg-black/75 text-white/70 opacity-0 backdrop-blur-md transition-all hover:bg-blue-600 hover:text-white hover:scale-110 group-hover:opacity-100 shadow-md cursor-pointer"
+                        >
+                          <FiDownload className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+
                       {/* Mac Icon Preview */}
                       <div className="flex h-20 w-24 items-center justify-center transition-transform group-hover:scale-105">
                         <MacFileIcon
@@ -960,34 +978,73 @@ function Dashboard() {
                 transition={{ duration: 0.3 }}
               >
                 {/* Desktop Table Header */}
-                <div className="hidden sm:grid grid-cols-[1fr_180px_100px_100px] gap-4 border-b border-white/5 px-4 pb-3 text-xs font-medium uppercase tracking-wider text-white/30">
+                <div className="hidden sm:grid grid-cols-[1fr_180px_100px_100px_48px] gap-4 border-b border-white/5 px-4 pb-3 text-xs font-medium uppercase tracking-wider text-white/30">
                   <span>name</span>
                   <span>account</span>
                   <span className="text-right">size</span>
                   <span className="text-right">modified</span>
+                  <span className="text-center"></span>
                 </div>
 
                 {/* Table Rows */}
-                {filteredFiles.map((file, i) => (
-                  <motion.div
-                    key={file.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleItemClick(file)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        handleItemClick(file)
-                      }
-                    }}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.2, delay: Math.min(i * 0.02, 0.5) }}
-                    className="group block cursor-pointer rounded-xl transition-colors hover:bg-white/[0.04] focus:outline-none focus:bg-white/[0.06]"
-                  >
-                    {/* Desktop row */}
-                    <div className="hidden sm:grid grid-cols-[1fr_180px_100px_100px] gap-4 px-4 py-3">
-                      <div className="flex items-center gap-3">
+                {filteredFiles.map((file, i) => {
+                  const isFolder = file.mimeType === 'application/vnd.google-apps.folder' || file.mimeType === 'folder'
+                  return (
+                    <motion.div
+                      key={file.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleItemClick(file)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          handleItemClick(file)
+                        }
+                      }}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.2, delay: Math.min(i * 0.02, 0.5) }}
+                      className="group block cursor-pointer rounded-xl transition-colors hover:bg-white/[0.04] focus:outline-none focus:bg-white/[0.06]"
+                    >
+                      {/* Desktop row */}
+                      <div className="hidden sm:grid grid-cols-[1fr_180px_100px_100px_48px] gap-4 px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-7 w-7 shrink-0 items-center justify-center">
+                            <MacFileIcon
+                              name={file.name}
+                              mimeType={file.mimeType}
+                              thumbnailLink={file.thumbnailLink}
+                              size="sm"
+                            />
+                          </div>
+                          <span className="truncate text-sm font-medium text-white/90 group-hover:text-white">
+                            {file.name}
+                          </span>
+                        </div>
+                        <span className="self-center truncate text-sm text-white/40">{file.accountEmail}</span>
+                        <span className="self-center text-right text-sm text-white/40">{formatBytes(file.size)}</span>
+                        <span className="self-center text-right text-sm text-white/40">{timeAgo(file.modifiedTime)}</span>
+                        <div className="self-center flex items-center justify-end">
+                          {!isFolder ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                triggerDownload(file.id, file.name, file.accountId)
+                              }}
+                              title={`Download ${file.name}`}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+                            >
+                              <FiDownload className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <span className="w-7" />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Mobile row */}
+                      <div className="flex items-center gap-3 px-3 py-3 sm:hidden">
                         <div className="flex h-7 w-7 shrink-0 items-center justify-center">
                           <MacFileIcon
                             name={file.name}
@@ -996,36 +1053,31 @@ function Dashboard() {
                             size="sm"
                           />
                         </div>
-                        <span className="truncate text-sm font-medium text-white/90 group-hover:text-white">
-                          {file.name}
-                        </span>
+                        <div className="flex flex-1 flex-col overflow-hidden">
+                          <span className="truncate text-sm font-medium text-white/90 group-hover:text-white">
+                            {file.name}
+                          </span>
+                          <span className="truncate text-xs text-white/30">
+                            {file.accountEmail} · {formatBytes(file.size)} · {timeAgo(file.modifiedTime)}
+                          </span>
+                        </div>
+                        {!isFolder && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              triggerDownload(file.id, file.name, file.accountId)
+                            }}
+                            title={`Download ${file.name}`}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/40 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+                          >
+                            <FiDownload className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
-                      <span className="self-center truncate text-sm text-white/40">{file.accountEmail}</span>
-                      <span className="self-center text-right text-sm text-white/40">{formatBytes(file.size)}</span>
-                      <span className="self-center text-right text-sm text-white/40">{timeAgo(file.modifiedTime)}</span>
-                    </div>
-
-                    {/* Mobile row */}
-                    <div className="flex items-center gap-3 px-3 py-3 sm:hidden">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center">
-                        <MacFileIcon
-                          name={file.name}
-                          mimeType={file.mimeType}
-                          thumbnailLink={file.thumbnailLink}
-                          size="sm"
-                        />
-                      </div>
-                      <div className="flex flex-1 flex-col overflow-hidden">
-                        <span className="truncate text-sm font-medium text-white/90 group-hover:text-white">
-                          {file.name}
-                        </span>
-                        <span className="truncate text-xs text-white/30">
-                          {file.accountEmail} · {formatBytes(file.size)} · {timeAgo(file.modifiedTime)}
-                        </span>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
+                    </motion.div>
+                  )
+                })}
               </motion.div>
             )}
           </div>

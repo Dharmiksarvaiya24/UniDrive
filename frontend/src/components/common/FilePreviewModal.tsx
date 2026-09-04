@@ -10,10 +10,12 @@ import {
   FiCheck,
   FiLoader,
   FiAlertCircle,
+  FiDownload,
 } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { API_BASE_URL } from '../../config/api'
 import { getSessionToken, authFetch } from '../../utils/auth'
+import { triggerDownload } from '../../utils/download'
 import { MacFileIcon } from '../dashboard/MacFileIcon'
 
 export interface FilePreviewModalProps {
@@ -90,6 +92,7 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
   }, [isOpen, onClose])
 
   const ext = (fileName || '').split('.').pop()?.toLowerCase() || ''
+  const isFolder = mimeType === 'application/vnd.google-apps.folder' || mimeType === 'folder'
 
   // Determine preview type
   const isImage = useMemo(() => {
@@ -312,6 +315,19 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                 </button>
               )}
 
+              {/* Download Button */}
+              {!isFolder && (
+                <button
+                  type="button"
+                  onClick={() => triggerDownload(fileId, fileName, accountId)}
+                  title="Download file"
+                  className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300 transition-colors"
+                >
+                  <FiDownload className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">Download</span>
+                </button>
+              )}
+
               {/* Open in Google Drive Link */}
               {webViewLink && (
                 <a
@@ -477,17 +493,29 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                   Direct inline preview is not supported for this file type ({ext ? `.${ext}` : 'binary'}).
                 </p>
 
-                {webViewLink && (
-                  <a
-                    href={webViewLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-medium text-blue-400 hover:bg-white/10 transition-colors"
-                  >
-                    <span>Open in Google Drive</span>
-                    <FiExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                )}
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {!isFolder && (
+                    <button
+                      type="button"
+                      onClick={() => triggerDownload(fileId, fileName, accountId)}
+                      className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-xs font-medium shadow-lg shadow-blue-600/20 transition-all active:scale-95 cursor-pointer"
+                    >
+                      <FiDownload className="h-4 w-4" />
+                      <span>Download File</span>
+                    </button>
+                  )}
+                  {webViewLink && (
+                    <a
+                      href={webViewLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-medium text-blue-400 hover:bg-white/10 transition-colors"
+                    >
+                      <span>Open in Google Drive</span>
+                      <FiExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </div>
               </div>
             )}
 
@@ -501,17 +529,29 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                 <p className="text-xs text-white/40 mb-5 max-w-xs">
                   The file content could not be rendered directly in the browser.
                 </p>
-                {webViewLink && (
-                  <a
-                    href={webViewLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-blue-400 hover:bg-white/10 transition-colors"
-                  >
-                    <span>Open in Google Drive</span>
-                    <FiExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                )}
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {!isFolder && (
+                    <button
+                      type="button"
+                      onClick={() => triggerDownload(fileId, fileName, accountId)}
+                      className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-xs font-medium shadow-lg shadow-blue-600/20 transition-all active:scale-95 cursor-pointer"
+                    >
+                      <FiDownload className="h-3.5 w-3.5" />
+                      <span>Download File</span>
+                    </button>
+                  )}
+                  {webViewLink && (
+                    <a
+                      href={webViewLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-blue-400 hover:bg-white/10 transition-colors"
+                    >
+                      <span>Open in Google Drive</span>
+                      <FiExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </div>
               </div>
             )}
           </div>
