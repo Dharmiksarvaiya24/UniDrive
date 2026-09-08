@@ -63,9 +63,9 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     )
   }
 
-  // If not authenticated, redirect to /login rather than 404
+  // If not authenticated, redirect to / rather than 404
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    return <Navigate to="/" state={{ from: location }} replace />
   }
 
   return <>{children}</>

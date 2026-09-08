@@ -206,7 +206,7 @@ function Dashboard() {
       console.error('Logout request failed:', err)
     }
     clearSessionToken()
-    navigate('/login', { replace: true })
+    navigate('/', { replace: true })
   }
 
   // Handle removing a connected account

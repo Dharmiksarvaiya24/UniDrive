@@ -53,8 +53,7 @@ function getOAuth2RedirectUri(req) {
     return 'http://localhost:5001/auth/google/callback';
   }
 
-  // Production:
-  // If explicitly configured with a non-localhost redirect URI, honor it
+ 
   if (
     process.env.GOOGLE_REDIRECT_URI &&
     !process.env.GOOGLE_REDIRECT_URI.includes('localhost') &&
@@ -63,7 +62,7 @@ function getOAuth2RedirectUri(req) {
     return process.env.GOOGLE_REDIRECT_URI;
   }
 
-  // Default production redirect URI registered in Google Cloud Console
+ 
   return 'https://unidrive.dharmik.live/auth/google/callback';
 }
 
@@ -79,8 +78,7 @@ function hashPassword(password, salt) {
   return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
 }
 
-// Step 1: redirect user to Google's OAuth screen.
-// userId comes from verified session (cookie, Bearer token header, or query param)
+
 exports.googleLogin = (req, res) => {
   let token = req.cookies?.[SESSION_COOKIE_NAME];
   if (!token) {
@@ -132,7 +130,7 @@ exports.googleLogin = (req, res) => {
   res.redirect(url);
 };
 
-// Map common Google OAuth error codes to user-readable messages (no internal detail leaked)
+
 const GOOGLE_ERROR_MESSAGES = {
   access_denied: 'You declined Google permissions. Please try again and allow access to continue.',
   redirect_uri_mismatch: 'OAuth configuration error. Please contact support.',
@@ -175,11 +173,11 @@ exports.googleCallback = async (req, res) => {
       const message = encodeURIComponent(
         GOOGLE_ERROR_MESSAGES[googleError] || 'Google sign-in failed. Please try again.'
       );
-      return res.redirect(`${returnHost}/login?error=${message}`);
+      return res.redirect(`${returnHost}/?error=${message}`);
     }
 
     if (!code) {
-      return res.redirect(`${returnHost}/login?error=${encodeURIComponent('Missing authorization code. Please try signing in again.')}`);
+      return res.redirect(`${returnHost}/?error=${encodeURIComponent('Missing authorization code. Please try signing in again.')}`);
     }
 
     const redirectUri = stateRedirectUri || getOAuth2RedirectUri(req);
@@ -195,7 +193,7 @@ exports.googleCallback = async (req, res) => {
 
     const cleanEmail = profile?.email ? profile.email.toLowerCase().trim() : '';
     if (!cleanEmail) {
-      return res.redirect(`${returnHost}/login?error=${encodeURIComponent('Could not retrieve email from Google profile.')}`);
+      return res.redirect(`${returnHost}/?error=${encodeURIComponent('Could not retrieve email from Google profile.')}`);
     }
 
     let userId = stateUserId || null;
@@ -234,7 +232,7 @@ exports.googleCallback = async (req, res) => {
     }
 
     if (!userId) {
-      return res.redirect(`${returnHost}/login?error=${encodeURIComponent('Account context is invalid. Please sign in again.')}`);
+      return res.redirect(`${returnHost}/?error=${encodeURIComponent('Account context is invalid. Please sign in again.')}`);
     }
 
     // Save this connected account's tokens under the user safely (ENCRYPTED at rest)
@@ -266,7 +264,7 @@ exports.googleCallback = async (req, res) => {
   } catch (err) {
     // Log the real error internally but never expose details to the client
     console.error('OAuth callback error:', err.message || err);
-    res.redirect(`${returnHost}/login?error=${encodeURIComponent('Sign-in failed. Please try again.')}`);
+    res.redirect(`${returnHost}/?error=${encodeURIComponent('Sign-in failed. Please try again.')}`);
   }
 };
 

@@ -1,6 +1,5 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import Home from './pages/Home'
-import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import NotFound from './pages/NotFound'
 import ProtectedRoute from './components/common/ProtectedRoute'
@@ -12,7 +11,15 @@ const router = createBrowserRouter([
   },
   {
     path: '/login',
-    element: <Login />,
+    element: <Navigate to="/" replace />,
+  },
+  {
+    path: '/signout',
+    element: <Navigate to="/" replace />,
+  },
+  {
+    path: '/logout',
+    element: <Navigate to="/" replace />,
   },
   {
     path: '/dashboard',
