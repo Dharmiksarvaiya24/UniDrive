@@ -7,6 +7,7 @@ const authRoutes = require('./src/routes/auth.routes');
 const userRoutes = require('./src/routes/user.routes');
 const filesRoutes = require('./src/routes/files.routes');
 const accountsRoutes = require('./src/routes/accounts.routes');
+const errorHandler = require('./src/middleware/errorHandler.middleware');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -81,11 +82,7 @@ app.use((req, res) => {
 });
 
 // Central error handler — never leak stack traces to clients
-app.use((err, req, res, next) => {
-  const isCorsError = err && err.message === 'Not allowed by CORS';
-  if (!isCorsError) console.error('Unhandled error:', err.message);
-  res.status(isCorsError ? 403 : 500).json({ error: isCorsError ? 'Not allowed by CORS' : 'Internal server error' });
-});
+app.use(errorHandler);
 
 // Start server
 app.listen(PORT, () => {

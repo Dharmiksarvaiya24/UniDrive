@@ -2,13 +2,71 @@ const { google } = require('googleapis');
 const { db } = require('../config/firebase');
 const { decrypt, encrypt } = require('../utils/encryption');
 
-// In-memory cache for resolved Drive clients & file metadata
-const fileInfoCache = new Map();
-const FILE_INFO_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+// Bounded in-memory cache helper with TTL and LRU eviction to prevent memory leaks
+class BoundedCache {
+  constructor(maxSize, ttlMs) {
+    this.cache = new Map();
+    this.maxSize = maxSize;
+    this.ttlMs = ttlMs;
+  }
 
-// In-memory buffer cache for PDFs (standard PDFs and exported Google Docs)
-const pdfBufferCache = new Map();
+  get(key) {
+    const item = this.cache.get(key);
+    if (!item) return undefined;
+    if (item.expiresAt && item.expiresAt <= Date.now()) {
+      this.cache.delete(key);
+      return undefined;
+    }
+    // Refresh LRU order
+    this.cache.delete(key);
+    this.cache.set(key, item);
+    return item;
+  }
+
+  set(key, val) {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.maxSize) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
+    }
+    if (!val.expiresAt) {
+      val.expiresAt = Date.now() + this.ttlMs;
+    }
+    this.cache.set(key, val);
+  }
+
+  delete(key) {
+    return this.cache.delete(key);
+  }
+
+  purgeExpired() {
+    const now = Date.now();
+    for (const [k, v] of this.cache.entries()) {
+      if (v.expiresAt && v.expiresAt <= now) {
+        this.cache.delete(k);
+      }
+    }
+  }
+}
+
+// In-memory cache for resolved Drive clients & file metadata (capped at 500 items)
+const FILE_INFO_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const fileInfoCache = new BoundedCache(500, FILE_INFO_CACHE_TTL);
+
+// In-memory buffer cache for PDFs (capped at 20 items to prevent heap exhaustion)
 const PDF_BUFFER_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+const pdfBufferCache = new BoundedCache(20, PDF_BUFFER_CACHE_TTL);
+
+// Periodically purge expired cache entries every 5 minutes
+const cleanupTimer = setInterval(() => {
+  fileInfoCache.purgeExpired();
+  pdfBufferCache.purgeExpired();
+}, 5 * 60 * 1000);
+if (cleanupTimer.unref) cleanupTimer.unref();
+
 
 /**
  * Creates an authorized OAuth2 Google Drive client for a given account doc
@@ -221,9 +279,20 @@ async function streamFile(req, res, { isDownload = false }) {
 
       // Buffer Google Docs exported to PDF for instant subsequent page loading
       if (exportMimeType === 'application/pdf') {
+        let isAborted = false;
+        req.on('close', () => {
+          isAborted = true;
+          if (exportRes.data && typeof exportRes.data.destroy === 'function') {
+            exportRes.data.destroy();
+          }
+        });
+
         const chunks = [];
-        exportRes.data.on('data', (c) => chunks.push(c));
+        exportRes.data.on('data', (c) => {
+          if (!isAborted) chunks.push(c);
+        });
         exportRes.data.on('end', () => {
+          if (isAborted) return;
           const buffer = Buffer.concat(chunks);
           pdfBufferCache.set(fileId, {
             buffer,
@@ -275,9 +344,20 @@ async function streamFile(req, res, { isDownload = false }) {
         { responseType: 'stream' }
       );
 
+      let isAborted = false;
+      req.on('close', () => {
+        isAborted = true;
+        if (streamRes.data && typeof streamRes.data.destroy === 'function') {
+          streamRes.data.destroy();
+        }
+      });
+
       const chunks = [];
-      streamRes.data.on('data', (c) => chunks.push(c));
+      streamRes.data.on('data', (c) => {
+        if (!isAborted) chunks.push(c);
+      });
       streamRes.data.on('end', () => {
+        if (isAborted) return;
         const buffer = Buffer.concat(chunks);
         pdfBufferCache.set(fileId, {
           buffer,
@@ -415,78 +495,102 @@ exports.getFiles = async (req, res) => {
     let totalStorageLimit = 0;
     let totalStorageUsage = 0;
 
-    // 3. For each connected account, fetch files and storage quota from Google Drive
-    for (const accountDoc of accountsSnap.docs) {
-      const account = accountDoc.data();
-      let accountStorage = null;
+    // 3. Concurrently fetch files and storage quota for all connected accounts
+    const accountResults = await Promise.allSettled(
+      accountsSnap.docs.map(async (accountDoc) => {
+        const account = accountDoc.data();
+        let accountStorage = null;
+        let driveFiles = [];
 
-      try {
-        const drive = createOAuth2ClientForAccount(userId, accountDoc);
-
-        // Fetch Storage Quota for this account
         try {
-          const aboutRes = await drive.about.get({
-            fields: 'storageQuota(limit, usage, usageInDrive, usageInDriveTrash)',
-          });
-          if (aboutRes.data && aboutRes.data.storageQuota) {
-            const quota = aboutRes.data.storageQuota;
-            const limit = quota.limit ? parseInt(quota.limit, 10) : 0;
-            const usage = quota.usage ? parseInt(quota.usage, 10) : 0;
-            totalStorageLimit += limit;
-            totalStorageUsage += usage;
-            accountStorage = { limit, usage };
-          }
-        } catch (aboutErr) {
-          console.warn(`Drive about quota error for ${account.email}:`, aboutErr.message);
+          const drive = createOAuth2ClientForAccount(userId, accountDoc);
+
+          // Fetch Storage Quota and file list in parallel
+          const quotaPromise = drive.about
+            .get({
+              fields: 'storageQuota(limit, usage, usageInDrive, usageInDriveTrash)',
+            })
+            .then((aboutRes) => {
+              if (aboutRes.data && aboutRes.data.storageQuota) {
+                const quota = aboutRes.data.storageQuota;
+                const limit = quota.limit ? parseInt(quota.limit, 10) : 0;
+                const usage = quota.usage ? parseInt(quota.usage, 10) : 0;
+                return { limit, usage };
+              }
+              return null;
+            })
+            .catch((aboutErr) => {
+              console.warn(`Drive about quota error for ${account.email}:`, aboutErr.message);
+              return null;
+            });
+
+          const qQuery = folderId
+            ? `trashed = false and '${folderId}' in parents`
+            : "trashed = false and 'root' in parents";
+
+          const filesPromise = drive.files
+            .list({
+              pageSize: 100,
+              fields:
+                'files(id, name, mimeType, size, modifiedTime, iconLink, thumbnailLink, webViewLink, starred, imageMediaMetadata(width, height), videoMediaMetadata(width, height), parents)',
+              orderBy: 'modifiedTime desc',
+              q: qQuery,
+            })
+            .then((response) => {
+              return (response.data.files || []).map((file) => ({
+                id: file.id,
+                name: file.name,
+                mimeType: file.mimeType,
+                size: file.size ? parseInt(file.size, 10) : 0,
+                modifiedTime: file.modifiedTime,
+                iconLink: file.iconLink,
+                thumbnailLink: file.thumbnailLink,
+                webViewLink: file.webViewLink,
+                starred: !!file.starred,
+                parents: file.parents || [],
+                dimensions: file.imageMediaMetadata
+                  ? `${file.imageMediaMetadata.width} × ${file.imageMediaMetadata.height}`
+                  : file.videoMediaMetadata
+                  ? `${file.videoMediaMetadata.width} × ${file.videoMediaMetadata.height}`
+                  : null,
+                accountEmail: account.email,
+                accountId: account.googleAccountId,
+              }));
+            });
+
+          const [quotaRes, filesRes] = await Promise.all([quotaPromise, filesPromise]);
+          accountStorage = quotaRes;
+          driveFiles = filesRes;
+        } catch (driveErr) {
+          console.error(
+            `Drive API error for account ${account.email}:`,
+            driveErr.message
+          );
         }
 
-        const qQuery = folderId
-          ? `trashed = false and '${folderId}' in parents`
-          : "trashed = false and 'root' in parents";
+        return {
+          account: {
+            googleAccountId: account.googleAccountId,
+            email: account.email,
+            name: account.name,
+            storage: accountStorage,
+          },
+          files: driveFiles,
+          storage: accountStorage,
+        };
+      })
+    );
 
-        const response = await drive.files.list({
-          pageSize: 100,
-          fields:
-            'files(id, name, mimeType, size, modifiedTime, iconLink, thumbnailLink, webViewLink, starred, imageMediaMetadata(width, height), videoMediaMetadata(width, height), parents)',
-          orderBy: 'modifiedTime desc',
-          q: qQuery,
-        });
-
-        const driveFiles = (response.data.files || []).map((file) => ({
-          id: file.id,
-          name: file.name,
-          mimeType: file.mimeType,
-          size: file.size ? parseInt(file.size, 10) : 0,
-          modifiedTime: file.modifiedTime,
-          iconLink: file.iconLink,
-          thumbnailLink: file.thumbnailLink,
-          webViewLink: file.webViewLink,
-          starred: !!file.starred,
-          parents: file.parents || [],
-          dimensions: file.imageMediaMetadata
-            ? `${file.imageMediaMetadata.width} × ${file.imageMediaMetadata.height}`
-            : file.videoMediaMetadata
-            ? `${file.videoMediaMetadata.width} × ${file.videoMediaMetadata.height}`
-            : null,
-          // Tag every file with which account it came from
-          accountEmail: account.email,
-          accountId: account.googleAccountId,
-        }));
-
-        allFiles.push(...driveFiles);
-      } catch (driveErr) {
-        console.error(
-          `Drive API error for account ${account.email}:`,
-          driveErr.message
-        );
+    for (const r of accountResults) {
+      if (r.status === 'fulfilled' && r.value) {
+        const { account, files, storage } = r.value;
+        accountsList.push(account);
+        allFiles.push(...files);
+        if (storage) {
+          totalStorageLimit += storage.limit || 0;
+          totalStorageUsage += storage.usage || 0;
+        }
       }
-
-      accountsList.push({
-        googleAccountId: account.googleAccountId,
-        email: account.email,
-        name: account.name,
-        storage: accountStorage,
-      });
     }
 
     // 4. Sort all files by modifiedTime (newest first)

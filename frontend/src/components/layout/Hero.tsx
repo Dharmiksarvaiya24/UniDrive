@@ -29,7 +29,7 @@ function Hero() {
         {...entrance(0.35)}
         className="mx-auto mt-6 max-w-2xl text-center text-[17px] leading-relaxed text-muted"
       >
-        <h4 className="text-white">All your Google Drives in one place.</h4>
+        <span className="block font-medium text-white">All your Google Drives in one place.</span>
       </motion.p>
 
       <motion.div

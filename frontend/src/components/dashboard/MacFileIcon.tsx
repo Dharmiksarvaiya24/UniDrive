@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useId } from 'react'
 
 interface MacFileIconProps {
   name: string
@@ -14,6 +14,7 @@ export const MacFileIcon: React.FC<MacFileIconProps> = ({
   size = 'md',
 }) => {
   const [imgError, setImgError] = useState(false)
+  const idPrefix = useId()
   const ext = name.split('.').pop()?.toUpperCase() || ''
 
   const isFolder = mimeType === 'application/vnd.google-apps.folder' || mimeType === 'folder'
@@ -55,11 +56,11 @@ export const MacFileIcon: React.FC<MacFileIconProps> = ({
       <div className={`relative flex items-center justify-center ${containerClasses}`}>
         <svg viewBox="0 0 100 80" className="h-full w-full drop-shadow-[0_4px_8px_rgba(0,0,0,0.35)]">
           <defs>
-            <linearGradient id="macFolderBack" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={`${idPrefix}-macFolderBack`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#3ca2ee" />
               <stop offset="100%" stopColor="#1e7dd8" />
             </linearGradient>
-            <linearGradient id="macFolderFront" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={`${idPrefix}-macFolderFront`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#67bcf7" />
               <stop offset="15%" stopColor="#4eaef5" />
               <stop offset="100%" stopColor="#2588df" />
@@ -68,14 +69,14 @@ export const MacFileIcon: React.FC<MacFileIconProps> = ({
           {/* Back tab */}
           <path
             d="M 6 16 C 6 10 10 7 16 7 L 36 7 C 42 7 45 10 49 14 L 54 18 L 86 18 C 92 18 96 22 96 28 L 96 66 C 96 72 92 76 86 76 L 14 76 C 8 76 4 72 4 66 Z"
-            fill="url(#macFolderBack)"
+            fill={`url(#${idPrefix}-macFolderBack)`}
           />
           {/* Inner paper hint */}
           <rect x="12" y="16" width="76" height="40" rx="3" fill="#ffffff" opacity="0.85" />
           {/* Front flap */}
           <path
             d="M 4 27 C 4 23 7 21 12 21 L 88 21 C 93 21 96 23 96 27 L 96 67 C 96 73 92 77 86 77 L 14 77 C 8 77 4 73 4 67 Z"
-            fill="url(#macFolderFront)"
+            fill={`url(#${idPrefix}-macFolderFront)`}
           />
         </svg>
       </div>

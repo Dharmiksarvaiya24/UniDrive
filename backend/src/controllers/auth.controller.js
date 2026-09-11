@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const util = require('util');
+const pbkdf2Async = util.promisify(crypto.pbkdf2);
 const { google } = require('googleapis');
 const { db } = require('../config/firebase');
 const {
@@ -63,7 +65,7 @@ function getOAuth2RedirectUri(req) {
   }
 
  
-  return 'https://unidrive.dharmik.live/auth/google/callback';
+  return process.env.GOOGLE_REDIRECT_URI || 'https://uni-drive-one.vercel.app/auth/google/callback';
 }
 
 function getOAuth2Client(customRedirectUri) {
@@ -74,8 +76,9 @@ function getOAuth2Client(customRedirectUri) {
   );
 }
 
-function hashPassword(password, salt) {
-  return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+async function hashPassword(password, salt) {
+  const derivedKey = await pbkdf2Async(password, salt, 10000, 64, 'sha512');
+  return derivedKey.toString('hex');
 }
 
 
@@ -295,7 +298,7 @@ exports.register = async (req, res) => {
 
       // If user previously signed in via Google only, add password to link account
       const salt = crypto.randomBytes(16).toString('hex');
-      const passwordHash = hashPassword(password, salt);
+      const passwordHash = await hashPassword(password, salt);
       const displayName = userData.name || name?.trim() || cleanEmail.split('@')[0];
 
       await usersRef.doc(userDoc.id).update({
@@ -320,7 +323,7 @@ exports.register = async (req, res) => {
     }
 
     const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = hashPassword(password, salt);
+    const passwordHash = await hashPassword(password, salt);
     const displayName = name?.trim() || cleanEmail.split('@')[0];
 
     const newUserRef = await usersRef.add({
@@ -376,7 +379,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    const computedHash = hashPassword(password, userData.salt);
+    const computedHash = await hashPassword(password, userData.salt);
     if (computedHash !== userData.passwordHash) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }

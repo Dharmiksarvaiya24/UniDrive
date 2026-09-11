@@ -4,16 +4,7 @@ import { FiX, FiTrash2, FiPlus, FiAlertCircle, FiLoader, FiCheck } from 'react-i
 import { FaGoogleDrive } from 'react-icons/fa'
 import { API_BASE_URL } from '../../config/api'
 import { authFetch } from '../../utils/auth'
-
-interface ConnectedAccount {
-  googleAccountId: string
-  email: string
-  name: string
-  storage?: {
-    limit: number
-    usage: number
-  } | null
-}
+import type { ConnectedAccount } from '../../types/drive'
 
 interface ManageAccountsModalProps {
   isOpen: boolean
