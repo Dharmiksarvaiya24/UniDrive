@@ -12,4 +12,10 @@ router.get('/:fileId/preview', sessionMiddleware, filesController.previewFile);
 // GET /api/files/:fileId/download — stream file as attachment for download
 router.get('/:fileId/download', sessionMiddleware, filesController.downloadFile);
 
+// DELETE /api/files/:fileId — delete file from Google Drive
+router.delete('/:fileId', sessionMiddleware, filesController.deleteFile);
+
+// POST /api/files/batch-delete — delete multiple files from Google Drive
+router.post('/batch-delete', sessionMiddleware, filesController.batchDeleteFiles);
+
 module.exports = router;

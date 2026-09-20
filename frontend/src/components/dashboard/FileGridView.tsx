@@ -1,13 +1,16 @@
 import React from 'react'
 import { motion } from 'framer-motion'
-import { FiDownload } from 'react-icons/fi'
+import { FiDownload, FiTrash2, FiCheck } from 'react-icons/fi'
 import { MacFileIcon } from './MacFileIcon'
 import type { DriveFile } from '../../types/drive'
 
 interface FileGridViewProps {
   files: DriveFile[]
+  selectedFileIds?: Set<string>
   onItemClick: (file: DriveFile) => void
   onDownload: (file: DriveFile) => void
+  onToggleSelect?: (file: DriveFile) => void
+  onDelete?: (file: DriveFile) => void
 }
 
 function formatBytes(bytes: number): string {
@@ -32,9 +35,14 @@ function getFileSubtitle(file: DriveFile): { text: string; isHighlight: boolean 
 
 export const FileGridView: React.FC<FileGridViewProps> = ({
   files,
+  selectedFileIds = new Set(),
   onItemClick,
   onDownload,
+  onToggleSelect,
+  onDelete,
 }) => {
+  const hasSelections = selectedFileIds.size > 0
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -45,6 +53,8 @@ export const FileGridView: React.FC<FileGridViewProps> = ({
       {files.map((file, i) => {
         const subtitle = getFileSubtitle(file)
         const isFolder = file.mimeType === 'application/vnd.google-apps.folder' || file.mimeType === 'folder'
+        const isSelected = selectedFileIds.has(file.id)
+
         return (
           <motion.div
             key={file.id}
@@ -61,22 +71,63 @@ export const FileGridView: React.FC<FileGridViewProps> = ({
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.25, delay: Math.min(i * 0.02, 0.6) }}
-            className="group relative flex cursor-pointer flex-col items-center rounded-xl p-2.5 transition-all hover:bg-white/[0.08] hover:shadow-lg hover:shadow-black/30 focus:outline-none focus:ring-1 focus:ring-accent"
+            className={`group relative flex cursor-pointer flex-col items-center rounded-xl p-2.5 transition-all focus:outline-none ${
+              isSelected
+                ? 'bg-blue-600/15 ring-2 ring-blue-500 shadow-lg shadow-blue-500/10'
+                : 'hover:bg-white/[0.08] hover:shadow-lg hover:shadow-black/30'
+            }`}
           >
-            {/* Download Button Overlay (Files only) */}
-            {!isFolder && (
+            {/* Selection Checkbox */}
+            {onToggleSelect && (
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation()
-                  onDownload(file)
+                  onToggleSelect(file)
                 }}
-                title={`Download ${file.name}`}
-                className="absolute top-2 right-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg bg-black/75 text-white/70 opacity-0 backdrop-blur-md transition-all hover:bg-blue-600 hover:text-white hover:scale-110 group-hover:opacity-100 shadow-md cursor-pointer"
+                title={isSelected ? 'Deselect file' : 'Select file'}
+                className={`absolute top-2 left-2 z-10 flex h-6 w-6 items-center justify-center rounded-lg border transition-all cursor-pointer ${
+                  isSelected
+                    ? 'border-blue-500 bg-blue-600 text-white opacity-100 shadow-sm'
+                    : hasSelections
+                    ? 'border-white/30 bg-black/70 text-transparent opacity-80 hover:opacity-100 hover:border-white/60'
+                    : 'border-white/20 bg-black/60 text-transparent opacity-0 group-hover:opacity-100 hover:border-white/50'
+                }`}
               >
-                <FiDownload className="h-3.5 w-3.5" />
+                <FiCheck className={`h-3.5 w-3.5 ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
               </button>
             )}
+
+            {/* Actions: Download & Delete Buttons */}
+            <div className="absolute top-2 right-2 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {!isFolder && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDownload(file)
+                  }}
+                  title={`Download ${file.name}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-black/75 text-white/70 backdrop-blur-md transition-all hover:bg-blue-600 hover:text-white hover:scale-105 shadow-md cursor-pointer"
+                >
+                  <FiDownload className="h-3.5 w-3.5" />
+                </button>
+              )}
+
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDelete(file)
+                  }}
+                  title={`Delete ${file.name}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-black/75 text-white/70 backdrop-blur-md transition-all hover:bg-red-600 hover:text-white hover:scale-105 shadow-md cursor-pointer"
+                >
+                  <FiTrash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
 
             {/* Mac Icon Preview */}
             <div className="flex h-20 w-24 items-center justify-center transition-transform group-hover:scale-105">
@@ -107,3 +158,4 @@ export const FileGridView: React.FC<FileGridViewProps> = ({
     </motion.div>
   )
 }
+

@@ -11,6 +11,7 @@ import {
   FiLoader,
   FiAlertCircle,
   FiDownload,
+  FiTrash2,
 } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { API_BASE_URL } from '../../config/api'
@@ -28,6 +29,7 @@ export interface FilePreviewModalProps {
   accountId?: string
   isOpen: boolean
   onClose: () => void
+  onDelete?: () => void
 }
 
 function formatBytes(bytes?: number): string {
@@ -47,6 +49,7 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
   accountEmail,
   accountId,
   onClose,
+  onDelete,
 }) => {
   const [zoom, setZoom] = useState(1)
   const [isMediaLoading, setIsMediaLoading] = useState(true)
@@ -303,10 +306,23 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
                 type="button"
                 onClick={() => triggerDownload(fileId, fileName, accountId)}
                 title="Download file"
-                className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300 transition-colors"
+                className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-emerald-300 transition-colors cursor-pointer"
               >
                 <FiDownload className="h-3.5 w-3.5 text-emerald-400" />
                 <span className="hidden sm:inline">Download</span>
+              </button>
+            )}
+
+            {/* Delete Button */}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                title="Delete file"
+                className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400 transition-colors cursor-pointer"
+              >
+                <FiTrash2 className="h-3.5 w-3.5 text-red-400" />
+                <span className="hidden sm:inline">Delete</span>
               </button>
             )}
 

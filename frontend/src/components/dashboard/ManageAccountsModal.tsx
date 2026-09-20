@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FiX, FiTrash2, FiPlus, FiAlertCircle, FiLoader, FiCheck } from 'react-icons/fi'
+import { FiX, FiTrash2, FiPlus, FiAlertCircle, FiLoader, FiCheck, FiRefreshCw } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { API_BASE_URL } from '../../config/api'
 import { authFetch } from '../../utils/auth'
@@ -85,7 +85,7 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
             <div>
               <h2 className="text-lg font-semibold text-white">Manage Connected Drives</h2>
               <p className="text-xs text-white/40 mt-0.5">
-                Add or disconnect Google Drive accounts connected to your workspace
+                Add, reconnect, or disconnect Google Drive accounts
               </p>
             </div>
             <button
@@ -139,15 +139,26 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Disconnect Action */}
-                      <div>
+                      {/* Account Actions */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Reconnect button */}
+                        <a
+                          href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(window.location.origin)}`}
+                          title="Reconnect to grant full delete permissions"
+                          className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-medium text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+                        >
+                          <FiRefreshCw className="h-3 w-3" />
+                          <span>Reconnect</span>
+                        </a>
+
+                        {/* Disconnect Action */}
                         {isConfirming ? (
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5">
                             <button
                               type="button"
                               disabled={isDeleting}
                               onClick={() => handleRemove(acc.googleAccountId)}
-                              className="flex items-center gap-1 rounded-lg bg-red-500/20 px-2.5 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+                              className="flex items-center gap-1 rounded-lg bg-red-500/20 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/30 transition-colors disabled:opacity-50"
                             >
                               {isDeleting ? (
                                 <FiLoader className="h-3.5 w-3.5 animate-spin" />
@@ -158,7 +169,7 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
                             <button
                               type="button"
                               onClick={() => setConfirmId(null)}
-                              className="rounded-lg bg-white/5 px-2 py-1 text-xs text-white/50 hover:bg-white/10 hover:text-white"
+                              className="rounded-lg bg-white/5 px-2 py-1.5 text-xs text-white/50 hover:bg-white/10 hover:text-white"
                             >
                               Cancel
                             </button>

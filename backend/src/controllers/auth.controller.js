@@ -14,7 +14,7 @@ const { encrypt } = require('../utils/encryption');
 const SCOPES = [
   'https://www.googleapis.com/auth/userinfo.profile',
   'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive',
 ];
 
 // Allowed frontend origins for OAuth return — never trust arbitrary redirect targets
@@ -125,7 +125,7 @@ exports.googleLogin = (req, res) => {
   const oauth2Client = getOAuth2Client(redirectUri);
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent select_account',
+    prompt: 'consent',
     scope: SCOPES,
     include_granted_scopes: true,
     state: statePayload,
@@ -190,6 +190,8 @@ exports.googleCallback = async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
 
+    console.log('Granted Google OAuth scopes for user:', tokens.scope);
+
     // Fetch the user's profile info
     const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
     const { data: profile } = await oauth2.userinfo.get();
@@ -243,6 +245,7 @@ exports.googleCallback = async (req, res) => {
       googleAccountId: profile.id,
       email: profile.email || '',
       name: profile.name || profile.email?.split('@')[0] || 'User',
+      scope: tokens.scope || '',
       accessToken: encrypt(tokens.access_token || ''),
       expiryDate: tokens.expiry_date || (Date.now() + 3600000),
       connectedAt: new Date(),

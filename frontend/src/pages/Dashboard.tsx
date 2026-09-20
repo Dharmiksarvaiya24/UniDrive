@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FiX, FiLoader, FiFolder } from 'react-icons/fi'
+import { FiX, FiLoader, FiFolder, FiCheckCircle, FiAlertCircle } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { FilePreviewModal } from '../components/common/FilePreviewModal'
 import { ManageAccountsModal } from '../components/dashboard/ManageAccountsModal'
@@ -10,6 +10,8 @@ import { DashboardHeader } from '../components/dashboard/DashboardHeader'
 import { DashboardStats } from '../components/dashboard/DashboardStats'
 import { FileGridView } from '../components/dashboard/FileGridView'
 import { FileListView } from '../components/dashboard/FileListView'
+import { DeleteConfirmModal } from '../components/dashboard/DeleteConfirmModal'
+import { SelectionActionBar } from '../components/dashboard/SelectionActionBar'
 import { API_BASE_URL } from '../config/api'
 import { authFetch, clearSessionToken } from '../utils/auth'
 import { triggerDownload } from '../utils/download'
@@ -46,6 +48,12 @@ function Dashboard() {
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
   const [filesLoading, setFilesLoading] = useState(true)
   const [isSyncing, setIsSyncing] = useState(false)
+
+  // Selection & Deletion state
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set())
+  const [deleteConfirmFiles, setDeleteConfirmFiles] = useState<DriveFile[]>([])
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
 
   // Modal dialog states
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null)
@@ -237,12 +245,134 @@ function Dashboard() {
       return 0
     })
 
+  // Auto-dismiss toast messages
+  useEffect(() => {
+    if (!toastMessage) return
+    const timeout = toastMessage.type === 'error' ? 8000 : 4000
+    const timer = setTimeout(() => setToastMessage(null), timeout)
+    return () => clearTimeout(timer)
+  }, [toastMessage])
+
+  // Deselect on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedFileIds.size > 0 && deleteConfirmFiles.length === 0 && !selectedFile) {
+        setSelectedFileIds(new Set())
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedFileIds, deleteConfirmFiles, selectedFile])
+
+  const handleToggleSelect = (file: DriveFile) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(file.id)) {
+        next.delete(file.id)
+      } else {
+        next.add(file.id)
+      }
+      return next
+    })
+  }
+
+  const handleSelectAll = () => {
+    setSelectedFileIds(new Set(filteredFiles.map((f) => f.id)))
+  }
+
+  const handleDeselectAll = () => {
+    setSelectedFileIds(new Set())
+  }
+
+  const handleRequestDeleteSingle = (file: DriveFile) => {
+    setDeleteConfirmFiles([file])
+  }
+
+  const handleRequestDeleteSelected = () => {
+    const selected = filteredFiles.filter((f) => selectedFileIds.has(f.id))
+    if (selected.length > 0) {
+      setDeleteConfirmFiles(selected)
+    }
+  }
+
+  const handleCloseDeleteModal = () => {
+    if (!isDeleting) {
+      setDeleteConfirmFiles([])
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (deleteConfirmFiles.length === 0 || isDeleting) return
+    setIsDeleting(true)
+    try {
+      if (deleteConfirmFiles.length === 1) {
+        const file = deleteConfirmFiles[0]
+        const qs = file.accountId ? `?accountId=${encodeURIComponent(file.accountId)}` : ''
+        const res = await authFetch(`${API_BASE_URL}/api/files/${file.id}${qs}`, {
+          method: 'DELETE',
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to delete file')
+
+        const deletedId = file.id
+        setRootFiles((prev) => prev.filter((f) => f.id !== deletedId))
+        setSubfolderFiles((prev) => prev.filter((f) => f.id !== deletedId))
+        setSelectedFileIds((prev) => {
+          const next = new Set(prev)
+          next.delete(deletedId)
+          return next
+        })
+        if (selectedFile?.id === deletedId) {
+          setSelectedFile(null)
+        }
+        setToastMessage({ text: `"${file.name}" deleted from Google Drive`, type: 'success' })
+      } else {
+        const payload = {
+          files: deleteConfirmFiles.map((f) => ({
+            fileId: f.id,
+            accountId: f.accountId,
+          })),
+        }
+        const res = await authFetch(`${API_BASE_URL}/api/files/batch-delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to delete files')
+
+        const deletedSet = new Set(data.deleted || deleteConfirmFiles.map((f) => f.id))
+        setRootFiles((prev) => prev.filter((f) => !deletedSet.has(f.id)))
+        setSubfolderFiles((prev) => prev.filter((f) => !deletedSet.has(f.id)))
+        setSelectedFileIds((prev) => {
+          const next = new Set(prev)
+          deletedSet.forEach((id) => next.delete(id))
+          return next
+        })
+        if (selectedFile && deletedSet.has(selectedFile.id)) {
+          setSelectedFile(null)
+        }
+        setToastMessage({
+          text: `Deleted ${deletedSet.size} file${deletedSet.size > 1 ? 's' : ''} from Google Drive`,
+          type: 'success',
+        })
+      }
+      setDeleteConfirmFiles([])
+    } catch (err: any) {
+      console.error('Deletion error:', err)
+      setToastMessage({ text: err.message || 'Failed to delete file', type: 'error' })
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   const sidebarProps = {
     activeTab,
     onTabChange: (tab: SidebarTab) => {
       setActiveTab(tab)
       setFolderBreadcrumbs([])
       setSubfolderFiles([])
+      setSelectedFileIds(new Set())
       setSidebarOpen(false)
     },
     connectedAccounts,
@@ -269,7 +399,68 @@ function Dashboard() {
         accountEmail={selectedFile?.accountEmail}
         isOpen={!!selectedFile}
         onClose={() => setSelectedFile(null)}
+        onDelete={selectedFile ? () => handleRequestDeleteSingle(selectedFile) : undefined}
       />
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteConfirmFiles.length > 0}
+        files={deleteConfirmFiles}
+        isDeleting={isDeleting}
+        onClose={handleCloseDeleteModal}
+        onConfirm={handleConfirmDelete}
+      />
+
+      {/* Selection Action Bar */}
+      <SelectionActionBar
+        selectedCount={selectedFileIds.size}
+        totalCount={filteredFiles.length}
+        onSelectAll={handleSelectAll}
+        onDeselectAll={handleDeselectAll}
+        onDeleteSelected={handleRequestDeleteSelected}
+      />
+
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className={`fixed top-6 right-6 z-50 flex items-center gap-3 rounded-xl border px-4 py-3 text-xs font-medium shadow-2xl backdrop-blur-xl ${
+              toastMessage.type === 'success'
+                ? 'border-emerald-500/30 bg-[#121c16]/90 text-emerald-300 shadow-emerald-950/40'
+                : 'border-red-500/30 bg-[#221214]/90 text-red-300 shadow-red-950/40'
+            }`}
+          >
+            {toastMessage.type === 'success' ? (
+              <FiCheckCircle className="h-4 w-4 text-emerald-400 shrink-0" />
+            ) : (
+              <FiAlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+            )}
+            <div className="flex flex-col gap-1 max-w-sm">
+              <span className="leading-snug">{toastMessage.text}</span>
+              {toastMessage.text.toLowerCase().includes('reconnect') && (
+                <a
+                  href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(window.location.origin)}`}
+                  className="mt-1 inline-flex items-center gap-1.5 self-start rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 px-2.5 py-1 text-[11px] font-semibold border border-red-500/30 transition-colors"
+                >
+                  <FaGoogleDrive className="h-3 w-3" />
+                  <span>Reconnect Google Drive</span>
+                </a>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setToastMessage(null)}
+              className="ml-2 rounded-lg p-1 text-white/40 hover:bg-white/10 hover:text-white transition-colors self-start"
+            >
+              <FiX className="h-3.5 w-3.5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Manage Connected Accounts Modal */}
       <ManageAccountsModal
@@ -328,7 +519,10 @@ function Dashboard() {
             onNavigateParent={handleNavigateParent}
             activeTab={activeTab}
             selectedAccountEmail={selectedAccountEmail}
-            onSelectAccountEmail={setSelectedAccountEmail}
+            onSelectAccountEmail={(email) => {
+              setSelectedAccountEmail(email)
+              setSelectedFileIds(new Set())
+            }}
             connectedAccounts={connectedAccounts}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
@@ -407,8 +601,11 @@ function Dashboard() {
             {!filesLoading && viewMode === 'grid' && filteredFiles.length > 0 && (
               <FileGridView
                 files={filteredFiles}
+                selectedFileIds={selectedFileIds}
                 onItemClick={handleItemClick}
                 onDownload={(file) => triggerDownload(file.id, file.name, file.accountId)}
+                onToggleSelect={handleToggleSelect}
+                onDelete={handleRequestDeleteSingle}
               />
             )}
 
@@ -416,8 +613,13 @@ function Dashboard() {
             {!filesLoading && viewMode === 'list' && filteredFiles.length > 0 && (
               <FileListView
                 files={filteredFiles}
+                selectedFileIds={selectedFileIds}
                 onItemClick={handleItemClick}
                 onDownload={(file) => triggerDownload(file.id, file.name, file.accountId)}
+                onToggleSelect={handleToggleSelect}
+                onSelectAll={handleSelectAll}
+                onDeselectAll={handleDeselectAll}
+                onDelete={handleRequestDeleteSingle}
               />
             )}
           </div>
@@ -428,3 +630,4 @@ function Dashboard() {
 }
 
 export default Dashboard
+

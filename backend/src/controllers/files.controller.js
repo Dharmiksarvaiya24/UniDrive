@@ -155,6 +155,7 @@ async function findDriveForFile(userId, fileId, preferredAccountId) {
       const drive = createOAuth2ClientForAccount(userId, accountDoc);
       const metaRes = await drive.files.get({
         fileId,
+        supportsAllDrives: true,
         fields: 'id, name, mimeType, size, webViewLink',
       });
       if (metaRes.data && metaRes.data.id) {
@@ -612,3 +613,152 @@ exports.getFiles = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch files' });
   }
 };
+
+/**
+ * DELETE /api/files/:fileId
+ * Deletes a single file from Google Drive using the associated connected account.
+ */
+exports.deleteFile = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { fileId } = req.params;
+    const accountId = req.query.accountId || req.body?.accountId;
+
+    if (!fileId) {
+      return res.status(400).json({ error: 'Missing fileId parameter' });
+    }
+
+    // Invalidate stale cache entries so fresh client is created
+    fileInfoCache.delete(`${userId}:${fileId}`);
+    pdfBufferCache.delete(fileId);
+
+    const driveInfo = await findDriveForFile(userId, fileId, accountId);
+    if (!driveInfo) {
+      return res.status(404).json({ error: 'File not found or access denied' });
+    }
+
+    const { drive } = driveInfo;
+
+    // Try permanent delete first, then fallback to moving to trash
+    try {
+      await drive.files.delete({ fileId, supportsAllDrives: true });
+    } catch (deleteErr) {
+      console.warn(`Permanent delete failed for ${fileId}, trying trash:`, deleteErr.message);
+      await drive.files.update({
+        fileId,
+        supportsAllDrives: true,
+        requestBody: { trashed: true },
+      });
+    }
+
+    // Evict from in-memory caches
+    fileInfoCache.delete(`${userId}:${fileId}`);
+    pdfBufferCache.delete(fileId);
+
+    return res.json({
+      success: true,
+      message: 'File deleted successfully',
+      fileId,
+    });
+  } catch (err) {
+    console.error('Delete file error:', err.message || err);
+    const msg = err.message || '';
+    const isInsufficientScope =
+      msg.includes('insufficient authentication scopes') ||
+      msg.includes('insufficientPermissions') ||
+      msg.includes('ACCESS_TOKEN_SCOPE_INSUFFICIENT') ||
+      err.code === 403;
+
+    if (isInsufficientScope) {
+      return res.status(403).json({
+        code: 'INSUFFICIENT_SCOPES',
+        error:
+          'Insufficient Google Drive permissions. Your account was connected with read-only access. Please reconnect your Google Drive account in UniDrive to allow deleting files.',
+      });
+    }
+
+    const status = err.code || err.status || 500;
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      error: err.message || 'Failed to delete file from Google Drive',
+    });
+  }
+};
+
+/**
+ * POST /api/files/batch-delete
+ * Deletes multiple files concurrently from Google Drive.
+ * Body: { files: string[] | { fileId: string, accountId?: string }[] }
+ */
+exports.batchDeleteFiles = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const rawFiles = req.body.files || req.body.fileIds;
+
+    if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
+      return res.status(400).json({ error: 'Expected non-empty files array' });
+    }
+
+    const normalized = rawFiles.map((item) =>
+      typeof item === 'string' ? { fileId: item } : item
+    );
+
+    const results = await Promise.allSettled(
+      normalized.map(async ({ fileId, accountId }) => {
+        fileInfoCache.delete(`${userId}:${fileId}`);
+        pdfBufferCache.delete(fileId);
+
+        const driveInfo = await findDriveForFile(userId, fileId, accountId);
+        if (!driveInfo) {
+          throw new Error(`File ${fileId} not found or access denied`);
+        }
+        try {
+          await driveInfo.drive.files.delete({ fileId, supportsAllDrives: true });
+        } catch (delErr) {
+          console.warn(`Permanent batch delete failed for ${fileId}, trying trash:`, delErr.message);
+          await driveInfo.drive.files.update({
+            fileId,
+            supportsAllDrives: true,
+            requestBody: { trashed: true },
+          });
+        }
+        fileInfoCache.delete(`${userId}:${fileId}`);
+        pdfBufferCache.delete(fileId);
+        return fileId;
+      })
+    );
+
+    const deleted = [];
+    const failed = [];
+
+    results.forEach((r, idx) => {
+      const fileId = normalized[idx].fileId;
+      if (r.status === 'fulfilled') {
+        deleted.push(fileId);
+      } else {
+        const rawErr = r.reason?.message || 'Failed to delete';
+        const isScopeErr =
+          rawErr.includes('insufficient authentication scopes') ||
+          rawErr.includes('insufficientPermissions') ||
+          r.reason?.code === 403;
+        failed.push({
+          fileId,
+          error: isScopeErr
+            ? 'Account needs reconnecting for delete permissions'
+            : rawErr,
+        });
+      }
+    });
+
+    return res.json({
+      success: true,
+      deletedCount: deleted.length,
+      failedCount: failed.length,
+      deleted,
+      failed,
+    });
+  } catch (err) {
+    console.error('Batch delete error:', err.message || err);
+    return res.status(500).json({ error: 'Batch delete operation failed' });
+  }
+};
+
