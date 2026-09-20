@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { FiX, FiLoader, FiFolder, FiCheckCircle, FiAlertCircle } from 'react-icons/fi'
@@ -341,11 +341,14 @@ function Dashboard() {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Failed to delete files')
 
-        const deletedSet = new Set(data.deleted || deleteConfirmFiles.map((f) => f.id))
+        const deletedIds: string[] = Array.isArray(data.deleted)
+          ? (data.deleted as string[])
+          : deleteConfirmFiles.map((f) => f.id)
+        const deletedSet = new Set<string>(deletedIds)
         setRootFiles((prev) => prev.filter((f) => !deletedSet.has(f.id)))
         setSubfolderFiles((prev) => prev.filter((f) => !deletedSet.has(f.id)))
         setSelectedFileIds((prev) => {
-          const next = new Set(prev)
+          const next = new Set<string>(prev)
           deletedSet.forEach((id) => next.delete(id))
           return next
         })
