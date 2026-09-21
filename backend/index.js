@@ -29,11 +29,43 @@ const allowedOrigins = [
   'http://localhost:3000',
 ].filter(Boolean);
 
+function isAllowedOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return false;
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+
+    if (allowedOrigins.some((allowed) => allowed && allowed.toLowerCase() === origin.toLowerCase())) {
+      return true;
+    }
+
+    if (host === 'dharmik.live' || host.endsWith('.dharmik.live')) {
+      return true;
+    }
+
+    if (host === 'vercel.app' || host.endsWith('.vercel.app')) {
+      return true;
+    }
+
+    if (
+      (host === 'localhost' || host === '127.0.0.1') &&
+      process.env.NODE_ENV !== 'production' &&
+      !process.env.VERCEL
+    ) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 app.use(
   cors({
     origin(origin, callback) {
-      // Allow non-browser requests (no Origin header, e.g. curl/server-to-server)
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow non-browser requests (no Origin header, e.g. curl/server-to-server) or matched origins
+      if (!origin || isAllowedOrigin(origin)) {
         return callback(null, true);
       }
       return callback(new Error('Not allowed by CORS'));

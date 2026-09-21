@@ -32,6 +32,14 @@ const ALLOWED_ORIGINS = [
 
 function isLocalRequest(req) {
   if (!req) return false;
+  // In production (Vercel, production NODE_ENV), NEVER treat as local request
+  if (
+    process.env.NODE_ENV === 'production' ||
+    process.env.VERCEL === '1' ||
+    process.env.VERCEL_ENV === 'production'
+  ) {
+    return false;
+  }
   const host = req.headers?.['x-forwarded-host'] || req.get?.('host') || '';
   const referer = req.headers?.referer || req.headers?.origin || '';
   return (
@@ -42,6 +50,42 @@ function isLocalRequest(req) {
   );
 }
 
+function isAllowedOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return false;
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+
+    // 1. Exact match in ALLOWED_ORIGINS
+    if (ALLOWED_ORIGINS.some((allowed) => allowed && allowed.toLowerCase() === origin.toLowerCase())) {
+      return true;
+    }
+
+    // 2. dharmik.live and any subdomain (*.dharmik.live)
+    if (host === 'dharmik.live' || host.endsWith('.dharmik.live')) {
+      return true;
+    }
+
+    // 3. Vercel deployment domains (*.vercel.app)
+    if (host === 'vercel.app' || host.endsWith('.vercel.app')) {
+      return true;
+    }
+
+    // 4. Localhost (only in non-production)
+    if (
+      (host === 'localhost' || host === '127.0.0.1') &&
+      process.env.NODE_ENV !== 'production' &&
+      !process.env.VERCEL
+    ) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function getOAuth2RedirectUri(req) {
   const isLocal = isLocalRequest(req);
 
@@ -49,13 +93,17 @@ function getOAuth2RedirectUri(req) {
     if (process.env.LOCAL_GOOGLE_REDIRECT_URI) {
       return process.env.LOCAL_GOOGLE_REDIRECT_URI;
     }
-    if (process.env.GOOGLE_REDIRECT_URI && (process.env.GOOGLE_REDIRECT_URI.includes('localhost') || process.env.GOOGLE_REDIRECT_URI.includes('127.0.0.1'))) {
+    if (
+      process.env.GOOGLE_REDIRECT_URI &&
+      (process.env.GOOGLE_REDIRECT_URI.includes('localhost') ||
+        process.env.GOOGLE_REDIRECT_URI.includes('127.0.0.1'))
+    ) {
       return process.env.GOOGLE_REDIRECT_URI;
     }
     return 'http://localhost:5001/auth/google/callback';
   }
 
- 
+  // Production redirect URI
   if (
     process.env.GOOGLE_REDIRECT_URI &&
     !process.env.GOOGLE_REDIRECT_URI.includes('localhost') &&
@@ -64,8 +112,7 @@ function getOAuth2RedirectUri(req) {
     return process.env.GOOGLE_REDIRECT_URI;
   }
 
- 
-  return process.env.GOOGLE_REDIRECT_URI || 'https://uni-drive-one.vercel.app/auth/google/callback';
+  return 'https://uni-drive-one.vercel.app/auth/google/callback';
 }
 
 function getOAuth2Client(customRedirectUri) {
@@ -97,17 +144,17 @@ exports.googleLogin = (req, res) => {
   const decoded = token ? verifySessionToken(token) : null;
   const verifiedUserId = decoded?.userId || null;
 
-  const requestedHost = req.query.redirectUrl;
   const isLocal = isLocalRequest(req);
   const defaultHost = isLocal
     ? 'http://localhost:5173'
     : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live');
 
-  // Only allow known-good origins in the state payload (prevents open redirect)
   let returnHost = defaultHost.replace(/\/$/, '');
+
+  const requestedHost = req.query.redirectUrl;
   if (requestedHost) {
     const cleanRequested = requestedHost.replace(/\/$/, '');
-    if (ALLOWED_ORIGINS.includes(cleanRequested)) {
+    if (isAllowedOrigin(cleanRequested)) {
       returnHost = cleanRequested;
     }
   }
@@ -145,13 +192,14 @@ const GOOGLE_ERROR_MESSAGES = {
 // Step 2: handle Google's redirect back with the code
 exports.googleCallback = async (req, res) => {
   const isLocal = isLocalRequest(req);
-  // Determine a safe return host early so we can redirect on any error
-  let returnHost = (isLocal ? 'http://localhost:5173' : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live')).replace(/\/$/, '');
+  let returnHost = (isLocal
+    ? 'http://localhost:5173'
+    : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live')
+  ).replace(/\/$/, '');
 
   try {
     const { code, state, error: googleError } = req.query;
 
-    // Decode state early so returnHost and redirectUri are accurate
     let stateUserId = null;
     let stateRedirectUri = null;
 
@@ -162,12 +210,12 @@ exports.googleCallback = async (req, res) => {
         stateRedirectUri = decoded.redirectUri || null;
         if (decoded.returnHost) {
           const cleanReturn = decoded.returnHost.replace(/\/$/, '');
-          if (ALLOWED_ORIGINS.includes(cleanReturn)) {
+          if (isAllowedOrigin(cleanReturn)) {
             returnHost = cleanReturn;
           }
         }
       } catch {
-        // Malformed state — proceed without userId (treat as fresh login)
+        // Malformed state — proceed with default returnHost
       }
     }
 
