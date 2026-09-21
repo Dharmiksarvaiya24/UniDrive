@@ -103,22 +103,13 @@ function getOAuth2RedirectUri(req) {
     return 'http://localhost:5001/auth/google/callback';
   }
 
-  // Production redirect URI: check env variable first
+  // Production redirect URI: always use the exact registered URL in Google Console
   if (
     process.env.GOOGLE_REDIRECT_URI &&
     !process.env.GOOGLE_REDIRECT_URI.includes('localhost') &&
     !process.env.GOOGLE_REDIRECT_URI.includes('127.0.0.1')
   ) {
     return process.env.GOOGLE_REDIRECT_URI;
-  }
-
-  // Dynamic fallback from incoming request host in production
-  if (req && typeof req.get === 'function') {
-    const host = req.headers?.['x-forwarded-host'] || req.get('host');
-    const proto = req.headers?.['x-forwarded-proto'] || req.protocol || 'https';
-    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
-      return `${proto}://${host}/auth/google/callback`;
-    }
   }
 
   return 'https://uni-drive-one.vercel.app/auth/google/callback';
