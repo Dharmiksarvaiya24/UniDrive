@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { FaXTwitter, FaLinkedinIn, FaGithub, FaEnvelope } from 'react-icons/fa6'
 import { SiDropbox } from 'react-icons/si'
@@ -161,6 +162,14 @@ function Footer() {
           <p>
             &copy; 2026 &middot; UniDrive
           </p>
+          <div className="flex items-center gap-6">
+            <Link
+              to="/privacy"
+              className="text-white/40 hover:text-white transition-colors underline-offset-4 hover:underline"
+            >
+              Privacy Policy
+            </Link>
+          </div>
         </div>
 
       </div>
