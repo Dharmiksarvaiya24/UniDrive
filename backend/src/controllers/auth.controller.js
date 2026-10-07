@@ -21,6 +21,8 @@ const SCOPES = [
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null,
+  'https://unidrive.dharmik.engineer',
+  'https://www.unidrive.dharmik.engineer',
   'https://unidrive.dharmik.live',
   'https://www.unidrive.dharmik.live',
   'http://localhost:5173',
@@ -61,8 +63,13 @@ function isAllowedOrigin(origin) {
       return true;
     }
 
-    // 2. dharmik.live and any subdomain (*.dharmik.live)
-    if (host === 'dharmik.live' || host.endsWith('.dharmik.live')) {
+    // 2. dharmik.engineer, dharmik.live and any subdomains
+    if (
+      host === 'dharmik.engineer' ||
+      host.endsWith('.dharmik.engineer') ||
+      host === 'dharmik.live' ||
+      host.endsWith('.dharmik.live')
+    ) {
       return true;
     }
 
@@ -147,7 +154,7 @@ exports.googleLogin = (req, res) => {
   const isLocal = isLocalRequest(req);
   const defaultHost = isLocal
     ? 'http://localhost:5173'
-    : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live');
+    : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.engineer');
 
   let returnHost = defaultHost.replace(/\/$/, '');
 
@@ -194,7 +201,7 @@ exports.googleCallback = async (req, res) => {
   const isLocal = isLocalRequest(req);
   let returnHost = (isLocal
     ? 'http://localhost:5173'
-    : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.live')
+    : (process.env.FRONTEND_URL || 'https://unidrive.dharmik.engineer')
   ).replace(/\/$/, '');
 
   try {

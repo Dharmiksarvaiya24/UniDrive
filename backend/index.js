@@ -20,6 +20,8 @@ app.set('trust proxy', 1);
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null,
+  'https://unidrive.dharmik.engineer',
+  'https://www.unidrive.dharmik.engineer',
   'https://unidrive.dharmik.live',
   'https://www.unidrive.dharmik.live',
   'http://localhost:5173',
@@ -39,7 +41,12 @@ function isAllowedOrigin(origin) {
       return true;
     }
 
-    if (host === 'dharmik.live' || host.endsWith('.dharmik.live')) {
+    if (
+      host === 'dharmik.engineer' ||
+      host.endsWith('.dharmik.engineer') ||
+      host === 'dharmik.live' ||
+      host.endsWith('.dharmik.live')
+    ) {
       return true;
     }
 
