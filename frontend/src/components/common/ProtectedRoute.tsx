@@ -1,7 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
-import { API_BASE_URL } from '../../config/api'
-import { authFetch, captureHashToken, clearSessionToken } from '../../utils/auth'
+import { useAuth } from '../../context/AuthContext'
 
 interface ProtectedRouteProps {
   children: ReactNode
@@ -9,50 +8,9 @@ interface ProtectedRouteProps {
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const location = useLocation()
-  const [isValidating, setIsValidating] = useState(true)
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const { isLoading, isAuthenticated } = useAuth()
 
-  useEffect(() => {
-    let isMounted = true
-
-    // Capture token from hash fragment if redirected from OAuth (e.g. #session=xyz).
-    // captureHashToken() stores it in localStorage AND returns it so we can pass it
-    // directly to authFetch — this avoids any storage read-back timing issues.
-    const hashToken = captureHashToken()
-
-    // Pass the just-captured token as an override so authFetch uses it immediately
-    // rather than depending on a localStorage round-trip.
-    authFetch(`${API_BASE_URL}/auth/session`, {}, hashToken)
-      .then((res) => {
-        if (!isMounted) return
-        if (!res.ok) throw new Error('Unauthorized')
-        return res.json()
-      })
-      .then((data) => {
-        if (!isMounted) return
-        if (data?.valid && data?.userId) {
-          setIsAuthenticated(true)
-        } else {
-          clearSessionToken()
-          setIsAuthenticated(false)
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          clearSessionToken()
-          setIsAuthenticated(false)
-        }
-      })
-      .finally(() => {
-        if (isMounted) setIsValidating(false)
-      })
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
-
-  if (isValidating) {
+  if (isLoading || isAuthenticated === null) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
@@ -70,4 +28,3 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   return <>{children}</>
 }
-

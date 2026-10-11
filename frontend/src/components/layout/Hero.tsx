@@ -1,9 +1,12 @@
 import { motion, useReducedMotion } from 'framer-motion'
+import { Link } from 'react-router-dom'
 import { API_BASE_URL } from '../../config/api'
+import { useAuth } from '../../context/AuthContext'
 import HeroVisual from './HeroVisual'
 
 function Hero() {
   const reduceMotion = useReducedMotion()
+  const { isAuthenticated, isLoading } = useAuth()
 
   const entrance = (delay: number, y = 20) => ({
     initial: reduceMotion ? false : { opacity: 0, y },
@@ -39,11 +42,24 @@ function Hero() {
         <div className="relative group">
           {/* Glowing backdrop */}
           <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-[#2AABEE] to-[#b7d8ea] opacity-40 blur-md transition-all duration-300 group-hover:opacity-75 animate-pulse"></div>
-          
-          <a
-            href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
-            className="relative flex items-center justify-center gap-3 overflow-hidden rounded-full bg-white px-7 py-3 text-[15px] font-semibold tracking-wide text-neutral-900 transition-all hover:scale-105 hover:bg-neutral-100 hover:shadow-lg hover:shadow-white/20 active:scale-95"
-          >
+
+          {isLoading ? (
+            <div className="relative flex items-center justify-center gap-3 overflow-hidden rounded-full bg-white/70 px-7 py-3 text-[15px] font-semibold tracking-wide text-neutral-500">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-600" />
+              <span className="relative z-10">Checking session...</span>
+            </div>
+          ) : isAuthenticated ? (
+            <Link
+              to="/dashboard"
+              className="relative flex items-center justify-center gap-3 overflow-hidden rounded-full bg-white px-7 py-3 text-[15px] font-semibold tracking-wide text-neutral-900 transition-all hover:scale-105 hover:bg-neutral-100 hover:shadow-lg hover:shadow-white/20 active:scale-95"
+            >
+              <span className="relative z-10 font-semibold text-neutral-900">Open Dashboard →</span>
+            </Link>
+          ) : (
+            <a
+              href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
+              className="relative flex items-center justify-center gap-3 overflow-hidden rounded-full bg-white px-7 py-3 text-[15px] font-semibold tracking-wide text-neutral-900 transition-all hover:scale-105 hover:bg-neutral-100 hover:shadow-lg hover:shadow-white/20 active:scale-95"
+            >
             <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0">
               <path
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -63,7 +79,8 @@ function Hero() {
               />
             </svg>
             <span className="relative z-10 font-semibold text-neutral-900">Continue with Google</span>
-          </a>
+            </a>
+          )}
         </div>
       </motion.div>
 

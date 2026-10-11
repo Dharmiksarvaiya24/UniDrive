@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
+import { Navigate } from 'react-router-dom'
 import Navbar from '../components/layout/Navbar'
 import Hero from '../components/layout/Hero'
 import ShowcaseSection from '../components/layout/ShowcaseSection'
 import HowWorks from '../components/sections/HowWorks'
 import IntegrationPlan from '../components/sections/IntegrationPlan'
 import Footer from '../components/layout/Footer'
+import { useAuth } from '../context/AuthContext'
 
 function Home() {
+  const { isAuthenticated } = useAuth()
   const [error, setError] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
     const urlError = new URLSearchParams(window.location.search).get('error')
@@ -20,6 +23,11 @@ function Home() {
       window.history.replaceState({}, '', params.toString() ? `?${params}` : window.location.pathname)
     }
   }, [error])
+
+  // Login-once: a valid stored session skips the landing page entirely.
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />
+  }
 
   return (
     <>

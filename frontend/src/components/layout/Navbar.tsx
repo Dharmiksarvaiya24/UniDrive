@@ -1,6 +1,9 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { FiMenu, FiX } from 'react-icons/fi'
 import logo from '../../assets/logo-drive.png'
+import { API_BASE_URL } from '../../config/api'
+import { useAuth } from '../../context/AuthContext'
 
 const navLinks = [
   { label: 'Product', href: '#showcase' },
@@ -11,6 +14,7 @@ const navLinks = [
 
 function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false)
+  const { isAuthenticated, isLoading } = useAuth()
 
   const handleScroll = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
     e.preventDefault()
@@ -52,6 +56,22 @@ function Navbar() {
         </div>
 
         <div className="flex items-center gap-4">
+          {!isLoading &&
+            (isAuthenticated ? (
+              <Link
+                to="/dashboard"
+                className="hidden rounded-full bg-white px-5 py-2 text-sm font-semibold text-neutral-900 transition-all hover:bg-neutral-100 md:inline-block"
+              >
+                Open Dashboard
+              </Link>
+            ) : (
+              <a
+                href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
+                className="hidden rounded-full bg-white px-5 py-2 text-sm font-semibold text-neutral-900 transition-all hover:bg-neutral-100 md:inline-block"
+              >
+                Sign in
+              </a>
+            ))}
           <button
             type="button"
             aria-label={menuOpen ? 'Close menu' : 'Open menu'}
@@ -75,6 +95,22 @@ function Navbar() {
               {link.label}
             </a>
           ))}
+          {!isLoading &&
+            (isAuthenticated ? (
+              <Link
+                to="/dashboard"
+                className="mt-2 inline-block rounded-full bg-white px-5 py-2 text-center text-sm font-semibold text-neutral-900"
+              >
+                Open Dashboard
+              </Link>
+            ) : (
+              <a
+                href={`${API_BASE_URL}/auth/google?redirectUrl=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
+                className="mt-2 inline-block rounded-full bg-white px-5 py-2 text-center text-sm font-semibold text-neutral-900"
+              >
+                Sign in
+              </a>
+            ))}
         </div>
       )}
     </header>
