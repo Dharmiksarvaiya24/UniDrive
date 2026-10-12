@@ -13,7 +13,8 @@ import { FileListView } from '../components/dashboard/FileListView'
 import { DeleteConfirmModal } from '../components/dashboard/DeleteConfirmModal'
 import { SelectionActionBar } from '../components/dashboard/SelectionActionBar'
 import { API_BASE_URL } from '../config/api'
-import { authFetch, clearSessionToken } from '../utils/auth'
+import { authFetch } from '../utils/auth'
+import { useAuth } from '../context/AuthContext'
 import { triggerDownload } from '../utils/download'
 import type {
   BreadcrumbItem,
@@ -26,6 +27,7 @@ import type {
 
 function Dashboard() {
   const navigate = useNavigate()
+  const { user: authUser, userId: authUserId, logout: authLogout } = useAuth()
 
   // Workspace & Navigation state
   const [activeTab, setActiveTab] = useState<SidebarTab>('all')
@@ -61,30 +63,14 @@ function Dashboard() {
 
   const currentFolder = folderBreadcrumbs.length > 0 ? folderBreadcrumbs[folderBreadcrumbs.length - 1] : null
 
-  // 1. Fetch user profile from backend
+  // 1. Sync user profile from shared auth session (validated once in AuthProvider).
+  //    No extra /auth/session network call — login-once stays fast.
   useEffect(() => {
-    let isCancelled = false
-    authFetch(`${API_BASE_URL}/auth/session`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Unauthorized')
-        return res.json()
-      })
-      .then((data) => {
-        if (isCancelled) return
-        if (data.valid && data.userId) {
-          setUserId(data.userId)
-          if (data.user?.name) setUserName(data.user.name)
-          if (data.user?.email) setUserEmail(data.user.email)
-          if (data.user?.picture) setUserPicture(data.user.picture)
-        }
-      })
-      .catch((err) => {
-        if (!isCancelled) console.error('Failed to fetch user profile:', err)
-      })
-    return () => {
-      isCancelled = true
-    }
-  }, [])
+    setUserId(authUserId)
+    setUserName(authUser?.name ?? null)
+    setUserEmail(authUser?.email ?? null)
+    setUserPicture(authUser?.picture ?? null)
+  }, [authUser, authUserId])
 
   // 2. Fetch root files when userId is available
   useEffect(() => {
@@ -135,14 +121,7 @@ function Dashboard() {
   }, [userId, currentFolder])
 
   const handleLogout = async () => {
-    try {
-      await authFetch(`${API_BASE_URL}/auth/logout`, {
-        method: 'POST',
-      })
-    } catch (err) {
-      console.error('Logout request failed:', err)
-    }
-    clearSessionToken()
+    await authLogout()
     navigate('/', { replace: true })
   }
 

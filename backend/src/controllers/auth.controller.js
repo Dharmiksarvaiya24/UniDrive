@@ -177,13 +177,20 @@ exports.googleLogin = (req, res) => {
   ).toString('base64');
 
   const oauth2Client = getOAuth2Client(redirectUri);
-  const url = oauth2Client.generateAuthUrl({
+  // Login-once: only force the consent screen when linking an additional
+  // Google account (verifiedUserId present, needs a fresh refresh_token).
+  // Fresh logins omit `prompt` so Google SSO can silently reuse its own
+  // session instead of forcing account re-selection every visit.
+  const authUrlOptions = {
     access_type: 'offline',
-    prompt: 'consent',
     scope: SCOPES,
     include_granted_scopes: true,
     state: statePayload,
-  });
+  };
+  if (verifiedUserId) {
+    authUrlOptions.prompt = 'consent';
+  }
+  const url = oauth2Client.generateAuthUrl(authUrlOptions);
   res.redirect(url);
 };
 
