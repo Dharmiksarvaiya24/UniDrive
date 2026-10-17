@@ -179,6 +179,112 @@ async function findDriveForFile(userId, fileId, preferredAccountId) {
 }
 
 /**
+ * Chooses which connected account should receive a new upload.
+ * Priority: explicit accountId → account with the most free storage.
+ * Accounts reporting an unlimited quota (limit <= 0) are treated as having the
+ * most room. Falls back to the first connected account when all quota lookups fail.
+ */
+async function pickUploadAccount(userId, preferredAccountId) {
+  const accountsSnap = await db
+    .collection('users')
+    .doc(userId)
+    .collection('connectedAccounts')
+    .get();
+
+  if (accountsSnap.empty) return null;
+
+  if (preferredAccountId) {
+    for (const doc of accountsSnap.docs) {
+      const data = doc.data();
+      if (
+        data.googleAccountId === preferredAccountId ||
+        doc.id === preferredAccountId ||
+        data.email === preferredAccountId
+      ) {
+        return { doc, account: data };
+      }
+    }
+  }
+
+  // Smart routing: pick the account with the most free storage
+  const results = await Promise.allSettled(
+    accountsSnap.docs.map(async (doc) => {
+      const account = doc.data();
+      const drive = createOAuth2ClientForAccount(userId, doc);
+      const aboutRes = await drive.about.get({
+        fields: 'storageQuota(limit, usage)',
+      });
+      const quota = aboutRes.data?.storageQuota || {};
+      const limit = quota.limit ? parseInt(quota.limit, 10) : 0;
+      const usage = quota.usage ? parseInt(quota.usage, 10) : 0;
+      // limit <= 0 means unlimited (Google Workspace) → always has room
+      const free = limit > 0 ? limit - usage : Number.MAX_SAFE_INTEGER;
+      return { doc, account, free };
+    })
+  );
+
+  let best = null;
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) {
+      if (!best || r.value.free > best.free) {
+        best = r.value;
+      }
+    }
+  }
+
+  if (!best) {
+    const doc = accountsSnap.docs[0];
+    return { doc, account: doc.data() };
+  }
+  return best;
+}
+
+/**
+ * Verifies that folderId is a folder inside the given account's Drive.
+ * Returns an error message string, or null when the folder is accessible.
+ */
+async function checkFolderAccess(drive, folderId) {
+  try {
+    const folderRes = await drive.files.get({
+      fileId: folderId,
+      supportsAllDrives: true,
+      fields: 'id, mimeType',
+    });
+    if (folderRes.data?.mimeType !== 'application/vnd.google-apps.folder') {
+      return 'Upload target is not a folder';
+    }
+    return null;
+  } catch {
+    return 'Target folder not found in the selected account';
+  }
+}
+
+/**
+ * Formats a Drive files.create response as a DriveFile object matching the
+ * shape returned by GET /api/files.
+ */
+function toDriveFile(file, account) {
+  return {
+    id: file.id,
+    name: file.name,
+    mimeType: file.mimeType,
+    size: file.size ? parseInt(file.size, 10) : 0,
+    modifiedTime: file.modifiedTime || new Date().toISOString(),
+    iconLink: file.iconLink,
+    thumbnailLink: file.thumbnailLink,
+    webViewLink: file.webViewLink,
+    starred: !!file.starred,
+    parents: file.parents || [],
+    dimensions: null,
+    accountEmail: account.email,
+    accountId: account.googleAccountId,
+  };
+}
+
+const CREATED_FILE_FIELDS =
+  'id, name, mimeType, size, modifiedTime, iconLink, thumbnailLink, webViewLink, starred, parents';
+
+/**
  * Formats a standard RFC 6266 Content-Disposition header with ASCII fallback
  * and UTF-8 encoded filename to support special characters across all browsers.
  */
@@ -759,6 +865,232 @@ exports.batchDeleteFiles = async (req, res) => {
   } catch (err) {
     console.error('Batch delete error:', err.message || err);
     return res.status(500).json({ error: 'Batch delete operation failed' });
+  }
+};
+
+/**
+ * Helper: maps Google errors to the standard insufficient-scope 403 response.
+ * Returns true when the response has been sent.
+ * `treat403AsScope: false` keeps non-scope 403s (e.g. "not the owner") out of
+ * this branch so callers can return a more accurate message.
+ */
+function respondWithScopeError(err, res, { treat403AsScope = true } = {}) {
+  const msg = err.message || '';
+  const isInsufficientScope =
+    msg.includes('insufficient authentication scopes') ||
+    msg.includes('insufficientPermissions') ||
+    msg.includes('ACCESS_TOKEN_SCOPE_INSUFFICIENT') ||
+    (treat403AsScope && err.code === 403);
+
+  if (!isInsufficientScope) return false;
+
+  res.status(403).json({
+    code: 'INSUFFICIENT_SCOPES',
+    error:
+      'Insufficient Google Drive permissions. Please reconnect your Google Drive account in UniDrive to grant write access.',
+  });
+  return true;
+}
+
+/**
+ * POST /api/files/upload?name=&folderId=&accountId=
+ * Streams the raw request body straight into Google Drive without buffering it
+ * in memory, so large files upload with minimal server resources.
+ * When accountId is omitted, the connected account with the most free storage
+ * is used (folders are account-bound, so pass accountId together with folderId).
+ */
+exports.uploadFile = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { folderId, accountId, name, mimeType } = req.query;
+
+    const fileName = String(name || '').trim();
+    if (!fileName) {
+      return res.status(400).json({ error: 'Missing file name' });
+    }
+
+    const picked = await pickUploadAccount(userId, accountId);
+    if (!picked) {
+      return res
+        .status(400)
+        .json({ error: 'No Google Drive account connected. Connect one to upload files.' });
+    }
+
+    const { doc: accountDoc, account } = picked;
+    const drive = createOAuth2ClientForAccount(userId, accountDoc);
+
+    if (folderId) {
+      const folderError = await checkFolderAccess(drive, folderId);
+      if (folderError) {
+        return res.status(404).json({ error: folderError });
+      }
+    }
+
+    const created = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [folderId || 'root'],
+      },
+      media: {
+        // The real MIME type travels as a query param because the request body
+        // is always sent as application/octet-stream (see utils/upload.ts)
+        mimeType: String(mimeType || '') || 'application/octet-stream',
+        body: req,
+      },
+      supportsAllDrives: true,
+      fields: CREATED_FILE_FIELDS,
+    });
+
+    return res.status(201).json({
+      file: toDriveFile(created.data, account),
+      accountEmail: account.email,
+    });
+  } catch (err) {
+    console.error('Upload error:', err.message || err);
+    if (res.headersSent) return;
+
+    const msg = err.message || '';
+    if (msg.includes('storageQuotaExceeded') || msg.includes('quota')) {
+      return res.status(400).json({
+        error:
+          'Google Drive storage is full for this account. Free up space or upload to another account.',
+      });
+    }
+    if (respondWithScopeError(err, res)) return;
+
+    return res.status(500).json({ error: 'Failed to upload file to Google Drive' });
+  }
+};
+
+/**
+ * POST /api/files/folder
+ * Body: { name, parentId?, accountId? }
+ * Creates a Google Drive folder inside parentId (or the drive root).
+ */
+exports.createFolder = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { name, parentId, accountId } = req.body || {};
+
+    const folderName = String(name || '').trim();
+    if (!folderName) {
+      return res.status(400).json({ error: 'Folder name is required' });
+    }
+    if (folderName.length > 255) {
+      return res.status(400).json({ error: 'Folder name must be 255 characters or fewer' });
+    }
+
+    const picked = await pickUploadAccount(userId, accountId);
+    if (!picked) {
+      return res
+        .status(400)
+        .json({ error: 'No Google Drive account connected. Connect one to create folders.' });
+    }
+
+    const { doc: accountDoc, account } = picked;
+    const drive = createOAuth2ClientForAccount(userId, accountDoc);
+
+    if (parentId) {
+      const folderError = await checkFolderAccess(drive, parentId);
+      if (folderError) {
+        return res.status(404).json({ error: folderError });
+      }
+    }
+
+    const created = await drive.files.create({
+      requestBody: {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId || 'root'],
+      },
+      supportsAllDrives: true,
+      fields: CREATED_FILE_FIELDS,
+    });
+
+    return res.status(201).json({
+      file: toDriveFile(created.data, account),
+      accountEmail: account.email,
+    });
+  } catch (err) {
+    console.error('Create folder error:', err.message || err);
+    if (res.headersSent) return;
+
+    if (respondWithScopeError(err, res)) return;
+
+    return res.status(500).json({ error: 'Failed to create folder in Google Drive' });
+  }
+};
+
+/**
+ * POST /api/files/:fileId/share
+ * Makes a file viewable by anyone with the link (role: reader) and returns its
+ * webViewLink. Body: { role?: 'reader' | 'writer', accountId? }
+ */
+exports.shareFile = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { fileId } = req.params;
+    const accountId = req.query.accountId || req.body?.accountId;
+    const role = req.body?.role === 'writer' ? 'writer' : 'reader';
+
+    if (!fileId) {
+      return res.status(400).json({ error: 'Missing fileId parameter' });
+    }
+
+    const driveInfo = await findDriveForFile(userId, fileId, accountId);
+    if (!driveInfo) {
+      return res.status(404).json({ error: 'File not found or access denied' });
+    }
+
+    const { drive, file } = driveInfo;
+
+    // Skip creating a duplicate permission when the file is already public
+    const permsRes = await drive.permissions.list({
+      fileId,
+      supportsAllDrives: true,
+      fields: 'permissions(id, type, role)',
+    });
+    const anyonePerm = (permsRes.data.permissions || []).find((p) => p.type === 'anyone');
+
+    if (!anyonePerm) {
+      await drive.permissions.create({
+        fileId,
+        supportsAllDrives: true,
+        requestBody: { role, type: 'anyone' },
+        fields: 'id',
+      });
+    }
+
+    // Fetch a fresh link (the cached metadata link may be stale)
+    const metaRes = await drive.files.get({
+      fileId,
+      supportsAllDrives: true,
+      fields: 'id, webViewLink',
+    });
+
+    return res.json({
+      success: true,
+      webViewLink: metaRes.data?.webViewLink || file.webViewLink || null,
+      role: anyonePerm ? anyonePerm.role : role,
+      alreadyShared: !!anyonePerm,
+    });
+  } catch (err) {
+    console.error('Share file error:', err.message || err);
+    if (res.headersSent) return;
+
+    if (respondWithScopeError(err, res, { treat403AsScope: false })) return;
+
+    const status = err.code || err.status;
+    if (status === 403) {
+      return res.status(403).json({
+        error:
+          'Google Drive denied sharing for this file. Only the file owner can change sharing settings.',
+      });
+    }
+
+    return res
+      .status(status >= 400 && status < 600 ? status : 500)
+      .json({ error: 'Failed to share file' });
   }
 };
 

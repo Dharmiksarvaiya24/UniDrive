@@ -12,6 +12,7 @@ import {
   FiAlertCircle,
   FiDownload,
   FiTrash2,
+  FiShare2,
 } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { API_BASE_URL } from '../../config/api'
@@ -30,6 +31,8 @@ export interface FilePreviewModalProps {
   isOpen: boolean
   onClose: () => void
   onDelete?: () => void
+  /** Lets the parent surface share results through the global toast system. */
+  onShareFeedback?: (message: { text: string; type: 'success' | 'error' }) => void
 }
 
 function formatBytes(bytes?: number): string {
@@ -50,6 +53,7 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
   accountId,
   onClose,
   onDelete,
+  onShareFeedback,
 }) => {
   const [zoom, setZoom] = useState(1)
   const [isMediaLoading, setIsMediaLoading] = useState(true)
@@ -57,6 +61,9 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
   const [textContent, setTextContent] = useState<string>('')
   const [textError, setTextError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [isSharing, setIsSharing] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
+  const [shareFailed, setShareFailed] = useState(false)
 
   // Close on Escape key press & prevent background scroll
   useEffect(() => {
@@ -188,6 +195,53 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
     }
   }
 
+  // Makes the file viewable by anyone with the link, then copies that link.
+  const handleShare = async () => {
+    if (!fileId || isSharing) return
+    setIsSharing(true)
+    setShareFailed(false)
+    try {
+      const params = new URLSearchParams()
+      if (accountId) params.set('accountId', accountId)
+
+      const res = await authFetch(
+        `${API_BASE_URL}/api/files/${fileId}/share?${params.toString()}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: 'reader' }),
+        }
+      )
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to share file')
+
+      const link: string = data.webViewLink || webViewLink || ''
+      if (link) {
+        try {
+          await navigator.clipboard.writeText(link)
+        } catch {
+          // clipboard may be unavailable — the link is still active
+        }
+        setLinkCopied(true)
+        setTimeout(() => setLinkCopied(false), 2000)
+      }
+
+      onShareFeedback?.({
+        text: link
+          ? `"${fileName}" is now viewable by anyone with the link — copied to clipboard`
+          : `"${fileName}" is now viewable by anyone with the link`,
+        type: 'success',
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to share file'
+      setShareFailed(true)
+      setTimeout(() => setShareFailed(false), 3000)
+      onShareFeedback?.({ text: message, type: 'error' })
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 md:p-7">
       {/* Backdrop */}
@@ -299,6 +353,41 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
                 )}
               </button>
             )}
+
+            {/* Share Button — anyone with the link can view */}
+            <button
+              type="button"
+              onClick={handleShare}
+              disabled={isSharing}
+              title="Share: anyone with the link can view"
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                shareFailed
+                  ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                  : 'border-white/10 bg-white/5 text-white/80 hover:border-blue-400/40 hover:bg-blue-400/10 hover:text-blue-300'
+              }`}
+            >
+              {isSharing ? (
+                <>
+                  <FiLoader className="h-3.5 w-3.5 animate-spin" />
+                  <span className="hidden sm:inline">Sharing...</span>
+                </>
+              ) : linkCopied ? (
+                <>
+                  <FiCheck className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline text-emerald-400">Link copied</span>
+                </>
+              ) : shareFailed ? (
+                <>
+                  <FiAlertCircle className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Failed</span>
+                </>
+              ) : (
+                <>
+                  <FiShare2 className="h-3.5 w-3.5 text-blue-400" />
+                  <span className="hidden sm:inline">Share</span>
+                </>
+              )}
+            </button>
 
             {/* Download Button */}
             {!isFolder && (
