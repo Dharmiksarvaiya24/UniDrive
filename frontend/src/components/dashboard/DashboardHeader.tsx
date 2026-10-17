@@ -12,6 +12,7 @@ import {
   FiRefreshCw,
 } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
+import { NewMenu } from './NewMenu'
 import type { BreadcrumbItem, ConnectedAccount, SidebarTab, ViewMode } from '../../types/drive'
 
 interface DashboardHeaderProps {
@@ -31,6 +32,8 @@ interface DashboardHeaderProps {
   filesLoading: boolean
   onSync: () => void
   onOpenMobileSidebar: () => void
+  onUploadFiles: () => void
+  onNewFolder: () => void
 }
 
 export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
@@ -50,6 +53,8 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
   filesLoading,
   onSync,
   onOpenMobileSidebar,
+  onUploadFiles,
+  onNewFolder,
 }) => {
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false)
   const filterRef = useRef<HTMLDivElement>(null)
@@ -141,6 +146,9 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
 
       {/* Controls: Search + View Switcher + Filter + Sync */}
       <div className="flex items-center gap-3">
+        {/* New: Upload files / New folder */}
+        <NewMenu onUploadFiles={onUploadFiles} onNewFolder={onNewFolder} />
+
         {/* Search */}
         <div className="relative flex-1 sm:w-80">
           <FiSearch className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />

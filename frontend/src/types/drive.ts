@@ -36,4 +36,21 @@ export type ViewMode = 'grid' | 'list'
 export interface BreadcrumbItem {
   id: string
   name: string
+  accountId?: string
+}
+
+export type UploadStatus = 'queued' | 'uploading' | 'success' | 'error'
+
+export interface UploadItem {
+  id: string
+  file: File
+  name: string
+  size: number
+  folderId?: string
+  accountId?: string
+  progress: number
+  status: UploadStatus
+  error?: string
+  accountEmail?: string
+  completedAt?: number
 }

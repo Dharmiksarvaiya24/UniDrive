@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, type ChangeEvent, type DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FiX, FiLoader, FiFolder, FiCheckCircle, FiAlertCircle } from 'react-icons/fi'
+import { FiX, FiLoader, FiFolder, FiCheckCircle, FiAlertCircle, FiUploadCloud } from 'react-icons/fi'
 import { FaGoogleDrive } from 'react-icons/fa'
 import { FilePreviewModal } from '../components/common/FilePreviewModal'
 import { ManageAccountsModal } from '../components/dashboard/ManageAccountsModal'
@@ -12,18 +12,30 @@ import { FileGridView } from '../components/dashboard/FileGridView'
 import { FileListView } from '../components/dashboard/FileListView'
 import { DeleteConfirmModal } from '../components/dashboard/DeleteConfirmModal'
 import { SelectionActionBar } from '../components/dashboard/SelectionActionBar'
+import { UploadPanel } from '../components/dashboard/UploadPanel'
+import { CreateFolderModal } from '../components/dashboard/CreateFolderModal'
 import { API_BASE_URL } from '../config/api'
 import { authFetch } from '../utils/auth'
 import { useAuth } from '../context/AuthContext'
 import { triggerDownload } from '../utils/download'
+import { uploadFile } from '../utils/upload'
 import type {
   BreadcrumbItem,
   ConnectedAccount,
   DriveFile,
   SidebarTab,
   StorageInfo,
+  UploadItem,
   ViewMode,
 } from '../types/drive'
+
+// How many uploads run at the same time (rest stay queued)
+const MAX_CONCURRENT_UPLOADS = 3
+
+interface UploadOutcome {
+  outcome: 'success' | 'error' | 'cancelled'
+  accountEmail?: string
+}
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -60,6 +72,19 @@ function Dashboard() {
   // Modal dialog states
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null)
   const [manageAccountsOpen, setManageAccountsOpen] = useState(false)
+
+  // Upload & "New" menu state
+  const [uploads, setUploads] = useState<UploadItem[]>([])
+  const [createFolderOpen, setCreateFolderOpen] = useState(false)
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false)
+  const [createFolderError, setCreateFolderError] = useState<string | null>(null)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+
+  // Refs: hidden file picker, in-flight XHRs, cancelled ids, drag depth
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const uploadXhrRef = useRef<Map<string, XMLHttpRequest>>(new Map())
+  const cancelledUploadsRef = useRef<Set<string>>(new Set())
+  const dragDepthRef = useRef(0)
 
   const currentFolder = folderBreadcrumbs.length > 0 ? folderBreadcrumbs[folderBreadcrumbs.length - 1] : null
 
@@ -165,10 +190,20 @@ function Dashboard() {
     }
   }
 
+  // Keeps a reference to the latest handleSync so async flows (uploads) always
+  // refresh whichever folder the user is viewing when they finish.
+  const handleSyncRef = useRef(handleSync)
+  useEffect(() => {
+    handleSyncRef.current = handleSync
+  })
+
   const handleItemClick = (file: DriveFile) => {
     if (file.mimeType === 'application/vnd.google-apps.folder' || file.mimeType === 'folder') {
       setFilesLoading(true)
-      setFolderBreadcrumbs((prev) => [...prev, { id: file.id, name: file.name }])
+      setFolderBreadcrumbs((prev) => [
+        ...prev,
+        { id: file.id, name: file.name, accountId: file.accountId },
+      ])
       setSearchQuery('')
     } else {
       setSelectedFile(file)
@@ -348,6 +383,281 @@ function Dashboard() {
     }
   }
 
+  // ---------- Uploads ----------
+
+  const updateUploadItem = (id: string, patch: Partial<UploadItem>) => {
+    setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)))
+  }
+
+  const runUpload = async (item: UploadItem): Promise<UploadOutcome> => {
+    if (cancelledUploadsRef.current.has(item.id)) {
+      cancelledUploadsRef.current.delete(item.id)
+      return { outcome: 'cancelled' }
+    }
+
+    updateUploadItem(item.id, { status: 'uploading', progress: 0, error: undefined })
+    try {
+      const result = await uploadFile(item.file, {
+        folderId: item.folderId,
+        accountId: item.accountId,
+        onProgress: (percent) => updateUploadItem(item.id, { progress: percent }),
+        onXhr: (xhr) => uploadXhrRef.current.set(item.id, xhr),
+      })
+      uploadXhrRef.current.delete(item.id)
+      updateUploadItem(item.id, {
+        status: 'success',
+        progress: 100,
+        accountEmail: result.accountEmail,
+        completedAt: Date.now(),
+      })
+      return { outcome: 'success', accountEmail: result.accountEmail }
+    } catch (err) {
+      uploadXhrRef.current.delete(item.id)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        cancelledUploadsRef.current.delete(item.id)
+        setUploads((prev) => prev.filter((u) => u.id !== item.id))
+        return { outcome: 'cancelled' }
+      }
+      const message = err instanceof Error ? err.message : 'Upload failed'
+      updateUploadItem(item.id, { status: 'error', error: message })
+      return { outcome: 'error' }
+    }
+  }
+
+  // Resolves where uploads/folders should go: the folder's own account when
+  // inside a folder, the filtered account at root, otherwise auto-routing
+  // (backend picks the account with the most free storage).
+  const resolveUploadTarget = (): { folderId?: string; accountId?: string } => {
+    const folderId = currentFolder?.id
+    const accountId =
+      currentFolder?.accountId ||
+      (selectedAccountEmail
+        ? connectedAccounts.find((a) => a.email === selectedAccountEmail)?.googleAccountId
+        : undefined)
+    return { folderId, accountId }
+  }
+
+  const startUploads = (files: File[]) => {
+    if (files.length === 0) return
+    if (connectedAccounts.length === 0) {
+      setToastMessage({ text: 'Connect a Google Drive account before uploading files.', type: 'error' })
+      return
+    }
+
+    const { folderId, accountId } = resolveUploadTarget()
+
+    const items: UploadItem[] = files.map((file) => ({
+      id: `up-${Date.now().toString(36)}-${Math.random().toString(36).slice(3, 9)}`,
+      file,
+      name: file.name,
+      size: file.size,
+      folderId,
+      accountId,
+      progress: 0,
+      status: 'queued',
+    }))
+
+    setUploads((prev) => [...prev, ...items])
+
+    // Bounded-concurrency upload pool
+    let cursor = 0
+    const outcomes: UploadOutcome[] = []
+    const worker = async () => {
+      while (cursor < items.length) {
+        const item = items[cursor]
+        cursor += 1
+        outcomes.push(await runUpload(item))
+      }
+    }
+
+    void Promise.all(
+      Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, items.length) }, worker)
+    ).then(async () => {
+      const successCount = outcomes.filter((o) => o.outcome === 'success').length
+      const errorCount = outcomes.filter((o) => o.outcome === 'error').length
+
+      if (successCount > 0) {
+        const emails = Array.from(
+          new Set(
+            outcomes
+              .filter((o) => o.outcome === 'success' && o.accountEmail)
+              .map((o) => o.accountEmail as string)
+          )
+        )
+        const destination = emails.length === 1 ? ` to ${emails[0]}` : ''
+        setToastMessage({
+          text: `Uploaded ${successCount} file${successCount > 1 ? 's' : ''}${destination}${
+            errorCount > 0 ? ` — ${errorCount} failed` : ''
+          }`,
+          type: errorCount > 0 ? 'error' : 'success',
+        })
+      } else if (errorCount > 0) {
+        setToastMessage({
+          text: `Upload failed for ${errorCount} file${errorCount > 1 ? 's' : ''}. Check the upload panel for details.`,
+          type: 'error',
+        })
+      }
+
+      if (successCount > 0) {
+        await handleSyncRef.current()
+      }
+    })
+  }
+
+  const handleCancelUpload = (id: string) => {
+    cancelledUploadsRef.current.add(id)
+    const xhr = uploadXhrRef.current.get(id)
+    if (xhr) {
+      xhr.abort()
+    } else {
+      // Still queued — remove it before a worker picks it up
+      setUploads((prev) => prev.filter((u) => u.id !== id))
+    }
+  }
+
+  const handleRetryUpload = (id: string) => {
+    const item = uploads.find((u) => u.id === id)
+    if (!item || item.status !== 'error') return
+    void runUpload(item).then(async (result) => {
+      if (result.outcome === 'success') {
+        setToastMessage({
+          text: `Uploaded "${item.name}"${result.accountEmail ? ` to ${result.accountEmail}` : ''}`,
+          type: 'success',
+        })
+        await handleSyncRef.current()
+      }
+    })
+  }
+
+  const handleDismissUpload = (id: string) => {
+    setUploads((prev) => prev.filter((u) => u.id !== id))
+  }
+
+  // Auto-dismiss completed uploads after a few seconds
+  const hasCompletedUploads = uploads.some((u) => u.status === 'success')
+  useEffect(() => {
+    if (!hasCompletedUploads) return
+    const interval = setInterval(() => {
+      setUploads((prev) => {
+        const next = prev.filter(
+          (u) => !(u.status === 'success' && u.completedAt && Date.now() - u.completedAt > 4000)
+        )
+        return next.length === prev.length ? prev : next
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [hasCompletedUploads])
+
+  const handleOpenUploadPicker = () => {
+    if (connectedAccounts.length === 0) {
+      setToastMessage({ text: 'Connect a Google Drive account before uploading files.', type: 'error' })
+      return
+    }
+    fileInputRef.current?.click()
+  }
+
+  const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    startUploads(files)
+  }
+
+  // ---------- New folder ----------
+
+  const handleCreateFolder = async (name: string) => {
+    if (isCreatingFolder) return
+    setIsCreatingFolder(true)
+    setCreateFolderError(null)
+    try {
+      const { folderId, accountId } = resolveUploadTarget()
+
+      const res = await authFetch(`${API_BASE_URL}/api/files/folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, parentId: folderId, accountId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to create folder')
+
+      const newFolder: DriveFile | undefined = data.file
+      if (newFolder) {
+        if (folderId) {
+          setSubfolderFiles((prev) => [newFolder, ...prev])
+        } else {
+          setRootFiles((prev) => [newFolder, ...prev])
+        }
+      }
+
+      setCreateFolderOpen(false)
+      setToastMessage({
+        text: `Folder "${name}" created${data.accountEmail ? ` in ${data.accountEmail}` : ''}`,
+        type: 'success',
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create folder'
+      setCreateFolderError(message)
+    } finally {
+      setIsCreatingFolder(false)
+    }
+  }
+
+  const createFolderTargetLabel = (() => {
+    if (currentFolder) {
+      const email = currentFolder.accountId
+        ? connectedAccounts.find((a) => a.googleAccountId === currentFolder.accountId)?.email
+        : undefined
+      return `"${currentFolder.name}"${email ? ` · ${email}` : ''}`
+    }
+    if (selectedAccountEmail) return `All files · ${selectedAccountEmail}`
+    return 'All files · auto (account with most free space)'
+  })()
+
+  // ---------- Drag & drop uploads ----------
+
+  const handleDragEnter = (e: DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragDepthRef.current += 1
+    if (connectedAccounts.length > 0) setIsDraggingFiles(true)
+  }
+
+  const handleDragOver = (e: DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+  }
+
+  const handleDragLeave = (e: DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setIsDraggingFiles(false)
+  }
+
+  const handleDropFiles = (e: DragEvent<HTMLElement>) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragDepthRef.current = 0
+    setIsDraggingFiles(false)
+    startUploads(Array.from(e.dataTransfer.files || []))
+  }
+
+  // Don't let the browser open files dropped outside the main area
+  useEffect(() => {
+    const preventDefault = (e: Event) => e.preventDefault()
+    window.addEventListener('dragover', preventDefault)
+    window.addEventListener('drop', preventDefault)
+    return () => {
+      window.removeEventListener('dragover', preventDefault)
+      window.removeEventListener('drop', preventDefault)
+    }
+  }, [])
+
+  // ---------- Share feedback ----------
+
+  const handleShareFeedback = (feedback: { text: string; type: 'success' | 'error' }) => {
+    setToastMessage(feedback)
+  }
+
   const sidebarProps = {
     activeTab,
     onTabChange: (tab: SidebarTab) => {
@@ -382,7 +692,34 @@ function Dashboard() {
         isOpen={!!selectedFile}
         onClose={() => setSelectedFile(null)}
         onDelete={selectedFile ? () => handleRequestDeleteSingle(selectedFile) : undefined}
+        onShareFeedback={handleShareFeedback}
       />
+
+      {/* Create Folder Modal */}
+      <CreateFolderModal
+        isOpen={createFolderOpen}
+        isCreating={isCreatingFolder}
+        error={createFolderError}
+        targetLabel={createFolderTargetLabel}
+        onClose={() => {
+          if (!isCreatingFolder) {
+            setCreateFolderOpen(false)
+            setCreateFolderError(null)
+          }
+        }}
+        onCreate={handleCreateFolder}
+      />
+
+      {/* Upload Queue Panel */}
+      <UploadPanel
+        uploads={uploads}
+        onCancel={handleCancelUpload}
+        onRetry={handleRetryUpload}
+        onDismiss={handleDismissUpload}
+      />
+
+      {/* Hidden file input used by New → Upload files */}
+      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
 
       {/* Delete Confirmation Modal */}
       <DeleteConfirmModal
@@ -491,7 +828,13 @@ function Dashboard() {
       </AnimatePresence>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
+      <main
+        className="flex-1 overflow-y-auto"
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDropFiles}
+      >
         <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 md:px-8 md:py-8">
           {/* Header Controls */}
           <DashboardHeader
@@ -514,6 +857,11 @@ function Dashboard() {
             filesLoading={filesLoading}
             onSync={handleSync}
             onOpenMobileSidebar={() => setSidebarOpen(true)}
+            onUploadFiles={handleOpenUploadPicker}
+            onNewFolder={() => {
+              setCreateFolderError(null)
+              setCreateFolderOpen(true)
+            }}
           />
 
           {/* Stats Cards (on root / All files view) */}
@@ -606,6 +954,23 @@ function Dashboard() {
             )}
           </div>
         </div>
+
+        {/* Drag & drop upload overlay */}
+        {isDraggingFiles && (
+          <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-3 rounded-3xl border-2 border-dashed border-accent/60 bg-[#101014]/90 px-10 py-8 shadow-2xl sm:px-14 sm:py-10">
+              <FiUploadCloud className="h-10 w-10 text-accent" />
+              <p className="text-sm font-semibold text-white">Drop files to upload</p>
+              <p className="text-xs text-white/40">
+                {currentFolder
+                  ? `Uploading to "${currentFolder.name}"`
+                  : selectedAccountEmail
+                  ? `Uploading to ${selectedAccountEmail}`
+                  : 'Files go to the account with the most free space'}
+              </p>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )
