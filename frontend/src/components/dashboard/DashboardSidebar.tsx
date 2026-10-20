@@ -126,9 +126,6 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
                   <FaGoogleDrive className="h-4 w-4 shrink-0 text-white/30" />
                   <span className="truncate">{acc.email}</span>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="h-2 w-2 rounded-full bg-green-400" />
-                </div>
               </div>
             ))
           ) : (

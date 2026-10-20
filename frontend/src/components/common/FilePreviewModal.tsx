@@ -354,40 +354,42 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
               </button>
             )}
 
-            {/* Share Button — anyone with the link can view */}
-            <button
-              type="button"
-              onClick={handleShare}
-              disabled={isSharing}
-              title="Share: anyone with the link can view"
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer disabled:opacity-60 ${
-                shareFailed
-                  ? 'border-red-500/40 bg-red-500/10 text-red-400'
-                  : 'border-white/10 bg-white/5 text-white/80 hover:border-blue-400/40 hover:bg-blue-400/10 hover:text-blue-300'
-              }`}
-            >
-              {isSharing ? (
-                <>
-                  <FiLoader className="h-3.5 w-3.5 animate-spin" />
-                  <span className="hidden sm:inline">Sharing...</span>
-                </>
-              ) : linkCopied ? (
-                <>
-                  <FiCheck className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline text-emerald-400">Link copied</span>
-                </>
-              ) : shareFailed ? (
-                <>
-                  <FiAlertCircle className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Failed</span>
-                </>
-              ) : (
-                <>
-                  <FiShare2 className="h-3.5 w-3.5 text-blue-400" />
-                  <span className="hidden sm:inline">Share</span>
-                </>
-              )}
-            </button>
+            {/* Share Button — files only; folders are not preview/shared targets here */}
+            {!isFolder && (
+              <button
+                type="button"
+                onClick={handleShare}
+                disabled={isSharing}
+                title="Share: anyone with the link can view"
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                  shareFailed
+                    ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                    : 'border-white/10 bg-white/5 text-white/80 hover:border-blue-400/40 hover:bg-blue-400/10 hover:text-blue-300'
+                }`}
+              >
+                {isSharing ? (
+                  <>
+                    <FiLoader className="h-3.5 w-3.5 animate-spin" />
+                    <span className="hidden sm:inline">Sharing...</span>
+                  </>
+                ) : linkCopied ? (
+                  <>
+                    <FiCheck className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="hidden sm:inline text-emerald-400">Link copied</span>
+                  </>
+                ) : shareFailed ? (
+                  <>
+                    <FiAlertCircle className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Failed</span>
+                  </>
+                ) : (
+                  <>
+                    <FiShare2 className="h-3.5 w-3.5 text-blue-400" />
+                    <span className="hidden sm:inline">Share</span>
+                  </>
+                )}
+              </button>
+            )}
 
             {/* Download Button */}
             {!isFolder && (
