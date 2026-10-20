@@ -683,7 +683,7 @@ function Dashboard() {
     setIsSharingSelection(true)
     try {
       const results = await Promise.allSettled(
-        shareableFiles.map(async (file) => {
+        shareableFiles.map(async (file): Promise<{ name: string; link?: string }> => {
           const qs = file.accountId ? `?accountId=${encodeURIComponent(file.accountId)}` : ''
           const res = await authFetch(`${API_BASE_URL}/api/files/${file.id}/share${qs}`, {
             method: 'POST',
@@ -692,7 +692,7 @@ function Dashboard() {
           })
           const data = await res.json()
           if (!res.ok) throw new Error(data.error || 'Failed to share file')
-          return { name: file.name, link: (data.webViewLink || file.webViewLink) as string | undefined }
+          return { name: file.name, link: data.webViewLink || file.webViewLink || undefined }
         })
       )
 
