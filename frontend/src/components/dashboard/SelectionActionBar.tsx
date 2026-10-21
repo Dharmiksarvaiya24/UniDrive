@@ -1,23 +1,43 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FiTrash2, FiCheckSquare, FiSquare, FiX } from 'react-icons/fi'
+import { FiTrash2, FiCheckSquare, FiSquare, FiX, FiShare2, FiCopy, FiCheck, FiLoader } from 'react-icons/fi'
+import type { DriveFile } from '../../types/drive'
 
 interface SelectionActionBarProps {
   selectedCount: number
   totalCount: number
+  selectedFiles: DriveFile[]
+  isSharing: boolean
   onSelectAll: () => void
   onDeselectAll: () => void
+  onShareSelected: () => void
+  onCopySelected: () => void
   onDeleteSelected: () => void
 }
 
 export const SelectionActionBar: React.FC<SelectionActionBarProps> = ({
   selectedCount,
   totalCount,
+  selectedFiles,
+  isSharing,
   onSelectAll,
   onDeselectAll,
+  onShareSelected,
+  onCopySelected,
   onDeleteSelected,
 }) => {
   const isAllSelected = selectedCount > 0 && selectedCount === totalCount
+  // Folders are excluded from share/copy — only files are shareable in this app
+  const shareableCount = selectedFiles.filter(
+    (f) => f.mimeType !== 'application/vnd.google-apps.folder' && f.mimeType !== 'folder'
+  ).length
+  const [linkCopied, setLinkCopied] = useState(false)
+
+  useEffect(() => {
+    if (!linkCopied) return
+    const t = setTimeout(() => setLinkCopied(false), 2000)
+    return () => clearTimeout(t)
+  }, [linkCopied])
 
   return (
     <AnimatePresence>
@@ -57,6 +77,56 @@ export const SelectionActionBar: React.FC<SelectionActionBarProps> = ({
               </>
             )}
           </button>
+
+          {/* Share Selected Button — files only */}
+          {shareableCount > 0 && (
+            <button
+              type="button"
+              onClick={onShareSelected}
+              disabled={isSharing}
+              title="Share: anyone with the link can view"
+              className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 hover:border-blue-400/40 hover:bg-blue-400/10 hover:text-blue-300 transition-all active:scale-95 disabled:opacity-60 cursor-pointer"
+            >
+              {isSharing ? (
+                <>
+                  <FiLoader className="h-3.5 w-3.5 animate-spin" />
+                  <span>Sharing...</span>
+                </>
+              ) : (
+                <>
+                  <FiShare2 className="h-3.5 w-3.5 text-blue-400" />
+                  <span>
+                    Share{shareableCount > 1 ? ` (${shareableCount})` : ''}
+                  </span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Copy Link Button — copies link(s) of selected files */}
+          {shareableCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                onCopySelected()
+                setLinkCopied(true)
+              }}
+              title="Copy link"
+              className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 hover:bg-white/10 hover:text-white transition-all active:scale-95 cursor-pointer"
+            >
+              {linkCopied ? (
+                <>
+                  <FiCheck className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="text-emerald-400">Copied</span>
+                </>
+              ) : (
+                <>
+                  <FiCopy className="h-3.5 w-3.5" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          )}
 
           {/* Delete Selected Button */}
           <button

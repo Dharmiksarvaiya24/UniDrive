@@ -67,6 +67,7 @@ function Dashboard() {
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set())
   const [deleteConfirmFiles, setDeleteConfirmFiles] = useState<DriveFile[]>([])
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isSharingSelection, setIsSharingSelection] = useState(false)
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
 
   // Modal dialog states
@@ -658,6 +659,94 @@ function Dashboard() {
     setToastMessage(feedback)
   }
 
+  // ---------- Batch share / copy for the selection action bar ----------
+
+  const selectedFiles = filteredFiles.filter((f) => selectedFileIds.has(f.id))
+  const shareableFiles = selectedFiles.filter(
+    (f) => f.mimeType !== 'application/vnd.google-apps.folder' && f.mimeType !== 'folder'
+  )
+
+  const copyLinks = async (links: string[]): Promise<boolean> => {
+    if (links.length === 0) return false
+    try {
+      await navigator.clipboard.writeText(links.length === 1 ? links[0] : links.join('\n'))
+      return true
+    } catch {
+      // Clipboard may be unavailable — links are still shared even if copy fails
+      return false
+    }
+  }
+
+  // Makes each selected file viewable by anyone with the link, then copies the link(s)
+  const handleShareSelected = async () => {
+    if (shareableFiles.length === 0 || isSharingSelection) return
+    setIsSharingSelection(true)
+    try {
+      const results = await Promise.allSettled(
+        shareableFiles.map(async (file): Promise<{ name: string; link?: string }> => {
+          const qs = file.accountId ? `?accountId=${encodeURIComponent(file.accountId)}` : ''
+          const res = await authFetch(`${API_BASE_URL}/api/files/${file.id}/share${qs}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'reader' }),
+          })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || 'Failed to share file')
+          return { name: file.name, link: data.webViewLink || file.webViewLink || undefined }
+        })
+      )
+
+      const ok = results.filter(
+        (r): r is PromiseFulfilledResult<{ name: string; link?: string }> => r.status === 'fulfilled'
+      )
+      const failedCount = results.length - ok.length
+      const copied = await copyLinks(ok.map((r) => r.value.link || '').filter(Boolean))
+
+      if (ok.length === 0) {
+        setToastMessage({ text: 'Failed to share selected files', type: 'error' })
+      } else if (ok.length === 1) {
+        setToastMessage({
+          text: `"${ok[0].value.name}" is now viewable by anyone with the link${copied ? ' — copied to clipboard' : ''}`,
+          type: 'success',
+        })
+      } else {
+        setToastMessage({
+          text: `${ok.length} files are now viewable by anyone with the link${copied ? ' — links copied to clipboard' : ''}`,
+          type: 'success',
+        })
+      }
+      if (failedCount > 0) {
+        setToastMessage({
+          text: failedCount === ok.length
+            ? 'Failed to share selected files'
+            : `Shared ${ok.length} of ${results.length} files — ${failedCount} failed`,
+          type: 'error',
+        })
+      }
+    } finally {
+      setIsSharingSelection(false)
+    }
+  }
+
+  // Copies the existing share links of the selected files without changing permissions
+  const handleCopySelected = async () => {
+    if (shareableFiles.length === 0) return
+    const links = shareableFiles.map((f) => f.webViewLink).filter((l): l is string => !!l)
+    if (links.length === 0) {
+      setToastMessage({ text: 'No link available — use Share to create one first', type: 'error' })
+      return
+    }
+    const copied = await copyLinks(links)
+    if (copied) {
+      setToastMessage({
+        text: links.length === 1 ? 'Link copied to clipboard' : `${links.length} links copied to clipboard`,
+        type: 'success',
+      })
+    } else {
+      setToastMessage({ text: 'Could not access the clipboard', type: 'error' })
+    }
+  }
+
   const sidebarProps = {
     activeTab,
     onTabChange: (tab: SidebarTab) => {
@@ -734,8 +823,12 @@ function Dashboard() {
       <SelectionActionBar
         selectedCount={selectedFileIds.size}
         totalCount={filteredFiles.length}
+        selectedFiles={selectedFiles}
+        isSharing={isSharingSelection}
         onSelectAll={handleSelectAll}
         onDeselectAll={handleDeselectAll}
+        onShareSelected={handleShareSelected}
+        onCopySelected={handleCopySelected}
         onDeleteSelected={handleRequestDeleteSelected}
       />
 
