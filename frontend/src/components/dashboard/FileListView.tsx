@@ -102,6 +102,12 @@ export const FileListView: React.FC<FileListViewProps> = ({
             role="button"
             tabIndex={0}
             onClick={() => onItemClick(file)}
+            onMouseEnter={() => {
+              if (file.thumbnailLink) {
+                const img = new Image()
+                img.src = file.thumbnailLink.replace(/=s\d+/, '=s1600')
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()

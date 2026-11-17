@@ -28,12 +28,15 @@ export interface FilePreviewModalProps {
   webViewLink?: string
   accountEmail?: string
   accountId?: string
+  thumbnailLink?: string
   isOpen: boolean
   onClose: () => void
   onDelete?: () => void
   /** Lets the parent surface share results through the global toast system. */
   onShareFeedback?: (message: { text: string; type: 'success' | 'error' }) => void
 }
+
+const textPreviewCache = new Map<string, string>()
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes === 0) return '0 B'
@@ -51,6 +54,7 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
   webViewLink,
   accountEmail,
   accountId,
+  thumbnailLink,
   onClose,
   onDelete,
   onShareFeedback,
@@ -58,6 +62,7 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
   const [zoom, setZoom] = useState(1)
   const [isMediaLoading, setIsMediaLoading] = useState(true)
   const [mediaError, setMediaError] = useState(false)
+  const [useFallbackImage, setUseFallbackImage] = useState(false)
   const [textContent, setTextContent] = useState<string>('')
   const [textError, setTextError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -146,23 +151,48 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
     )
   }, [mimeType, ext, isImage, isVideo, isAudio, isPdf, isGoogleDoc])
 
-  // Build authenticated preview URL through UniDrive backend
+  // Fast thumbnail URL from Google Drive Edge CDN for instant 0ms visual placeholder
+  const fastThumbUrl = useMemo(() => {
+    if (!thumbnailLink) return ''
+    return thumbnailLink.replace(/=s\d+/, '=s220')
+  }, [thumbnailLink])
+
+  // High-resolution CDN URL for instant crisp rendering directly from Google's edge
+  const highResCdnUrl = useMemo(() => {
+    if (!thumbnailLink) return ''
+    return thumbnailLink.replace(/=s\d+/, '=s1600')
+  }, [thumbnailLink])
+
+  // Build authenticated preview URL through UniDrive backend with metadata hints
   const previewUrl = useMemo(() => {
     if (!fileId) return ''
     const token = getSessionToken()
     const params = new URLSearchParams()
     if (token) params.set('token', token)
     if (accountId) params.set('accountId', accountId)
+    if (fileName) params.set('name', fileName)
+    if (mimeType) params.set('mimeType', mimeType)
+    if (size !== undefined && size > 0) params.set('size', size.toString())
     const qs = params.toString()
     return `${API_BASE_URL}/api/files/${fileId}/preview${qs ? `?${qs}` : ''}`
-  }, [fileId, accountId])
+  }, [fileId, accountId, fileName, mimeType, size])
 
-  const [isTextLoading, setIsTextLoading] = useState<boolean>(() => isText && !!previewUrl)
+  const activeImageSrc = !useFallbackImage && highResCdnUrl ? highResCdnUrl : previewUrl
 
-  // Fetch text file contents directly when text preview is active
+  const [isTextLoading, setIsTextLoading] = useState<boolean>(
+    () => isText && !!previewUrl && !textPreviewCache.has(previewUrl)
+  )
+
+  // Fetch text file contents directly when text preview is active (with memory cache)
   useEffect(() => {
     if (!isText || !previewUrl) return
+    if (textPreviewCache.has(previewUrl)) {
+      setTextContent(textPreviewCache.get(previewUrl)!)
+      setIsTextLoading(false)
+      return
+    }
     let isCancelled = false
+    setIsTextLoading(true)
     authFetch(previewUrl)
       .then(async (res) => {
         if (isCancelled) return
@@ -171,6 +201,7 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
         }
         const text = await res.text()
         if (isCancelled) return
+        textPreviewCache.set(previewUrl, text)
         setTextContent(text)
         setIsTextLoading(false)
       })
@@ -448,13 +479,23 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
           {/* 1. Image Preview */}
           {isImage && (
             <div className="relative h-full w-full flex items-center justify-center overflow-auto p-4">
+              {/* Instant blurred placeholder from cached thumbnail */}
+              {fastThumbUrl && isMediaLoading && !mediaError && (
+                <img
+                  src={fastThumbUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute max-h-full max-w-full object-contain filter blur-md opacity-40 scale-95 transition-opacity pointer-events-none"
+                />
+              )}
+
               {isMediaLoading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-[#09090b]">
-                  <FiLoader className="h-8 w-8 animate-spin text-white/40" />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/10 backdrop-blur-[1px] pointer-events-none z-10">
+                  <FiLoader className="h-8 w-8 animate-spin text-white/50" />
                 </div>
               )}
               <img
-                src={previewUrl}
+                src={activeImageSrc}
                 alt={fileName || 'Image preview'}
                 style={{
                   transform: `scale(${zoom})`,
@@ -462,10 +503,15 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
                 }}
                 onLoad={() => setIsMediaLoading(false)}
                 onError={() => {
-                  setIsMediaLoading(false)
-                  setMediaError(true)
+                  if (!useFallbackImage && highResCdnUrl) {
+                    // Fallback to UniDrive backend stream if Google CDN link fails
+                    setUseFallbackImage(true)
+                  } else {
+                    setIsMediaLoading(false)
+                    setMediaError(true)
+                  }
                 }}
-                className={`max-h-full max-w-full rounded-lg object-contain shadow-2xl transition-transform duration-150 select-none ${
+                className={`max-h-full max-w-full rounded-lg object-contain shadow-2xl transition-all duration-200 select-none ${
                   isMediaLoading ? 'opacity-0' : 'opacity-100'
                 }`}
               />
@@ -513,8 +559,16 @@ const FilePreviewModalContent: React.FC<Required<Pick<FilePreviewModalProps, 'fi
           {(isPdf || isGoogleDoc) && (
             <div className="relative h-full w-full bg-[#18181b]">
               {isMediaLoading && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#18181b] z-10">
-                  <FiLoader className="h-8 w-8 animate-spin text-blue-400 mb-3" />
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#18181b] z-10 pointer-events-none">
+                  {thumbnailLink && (
+                    <img
+                      src={thumbnailLink.replace(/=s\d+/, '=s400')}
+                      alt=""
+                      aria-hidden="true"
+                      className="max-h-[60%] max-w-[50%] object-contain rounded opacity-25 filter blur-[0.5px] mb-3 shadow-lg"
+                    />
+                  )}
+                  <FiLoader className="h-7 w-7 animate-spin text-blue-400 mb-2" />
                   <span className="text-xs text-white/50 font-medium">Loading document...</span>
                 </div>
               )}

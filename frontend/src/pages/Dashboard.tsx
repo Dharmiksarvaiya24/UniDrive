@@ -776,6 +776,7 @@ function Dashboard() {
         mimeType={selectedFile?.mimeType}
         size={selectedFile?.size}
         accountId={selectedFile?.accountId}
+        thumbnailLink={selectedFile?.thumbnailLink}
         webViewLink={selectedFile?.webViewLink}
         accountEmail={selectedFile?.accountEmail}
         isOpen={!!selectedFile}

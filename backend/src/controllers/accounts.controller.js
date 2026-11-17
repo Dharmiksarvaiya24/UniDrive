@@ -1,6 +1,7 @@
 const { db } = require('../config/firebase');
 const { google } = require('googleapis');
 const { decrypt } = require('../utils/encryption');
+const { invalidateUserAccountsCache } = require('./files.controller');
 
 /**
  * GET /api/accounts
@@ -77,6 +78,7 @@ exports.removeAccount = async (req, res) => {
 
     // Delete account from Firestore
     await accountRef.delete();
+    invalidateUserAccountsCache(userId);
 
     res.json({
       success: true,
