@@ -60,10 +60,38 @@ const fileInfoCache = new BoundedCache(500, FILE_INFO_CACHE_TTL);
 const PDF_BUFFER_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 const pdfBufferCache = new BoundedCache(20, PDF_BUFFER_CACHE_TTL);
 
+// In-memory cache for user's connected account docs (TTL 5 minutes)
+const USER_ACCOUNTS_CACHE_TTL = 5 * 60 * 1000;
+const userAccountsCache = new BoundedCache(200, USER_ACCOUNTS_CACHE_TTL);
+
+function invalidateUserAccountsCache(userId) {
+  if (userId) userAccountsCache.delete(userId);
+}
+
+async function getUserAccounts(userId) {
+  const cached = userAccountsCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+  const accountsSnap = await db
+    .collection('users')
+    .doc(userId)
+    .collection('connectedAccounts')
+    .get();
+
+  const entry = {
+    docs: accountsSnap.docs,
+    expiresAt: Date.now() + USER_ACCOUNTS_CACHE_TTL,
+  };
+  userAccountsCache.set(userId, entry);
+  return entry;
+}
+
 // Periodically purge expired cache entries every 5 minutes
 const cleanupTimer = setInterval(() => {
   fileInfoCache.purgeExpired();
   pdfBufferCache.purgeExpired();
+  userAccountsCache.purgeExpired();
 }, 5 * 60 * 1000);
 if (cleanupTimer.unref) cleanupTimer.unref();
 
@@ -114,27 +142,23 @@ function createOAuth2ClientForAccount(userId, accountDoc) {
  * Locates the connected account that has access to the requested file.
  * Uses an in-memory cache to avoid redundant Firestore reads and Drive API calls.
  */
-async function findDriveForFile(userId, fileId, preferredAccountId) {
+async function findDriveForFile(userId, fileId, preferredAccountId, queryMeta = {}) {
   const cacheKey = `${userId}:${fileId}`;
   const cached = fileInfoCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
   }
 
-  const accountsSnap = await db
-    .collection('users')
-    .doc(userId)
-    .collection('connectedAccounts')
-    .get();
+  const { docs: accountDocs } = await getUserAccounts(userId);
 
-  if (accountsSnap.empty) {
+  if (!accountDocs || accountDocs.length === 0) {
     return null;
   }
 
   let preferredDoc = null;
   const otherDocs = [];
 
-  for (const doc of accountsSnap.docs) {
+  for (const doc of accountDocs) {
     const data = doc.data();
     if (
       preferredAccountId &&
@@ -148,6 +172,25 @@ async function findDriveForFile(userId, fileId, preferredAccountId) {
     }
   }
 
+  // Fast path: When preferred account is known and queryMeta provides mimeType,
+  // construct Drive client directly and bypass redundant metadata network roundtrip.
+  if (preferredDoc && queryMeta?.mimeType) {
+    const drive = createOAuth2ClientForAccount(userId, preferredDoc);
+    const result = {
+      drive,
+      file: {
+        id: fileId,
+        name: queryMeta.name || 'file',
+        mimeType: queryMeta.mimeType,
+        size: queryMeta.size ? parseInt(queryMeta.size, 10) : undefined,
+      },
+      account: preferredDoc.data(),
+      expiresAt: Date.now() + FILE_INFO_CACHE_TTL,
+    };
+    fileInfoCache.set(cacheKey, result);
+    return result;
+  }
+
   const docsToTry = preferredDoc ? [preferredDoc, ...otherDocs] : otherDocs;
 
   for (const accountDoc of docsToTry) {
@@ -156,7 +199,7 @@ async function findDriveForFile(userId, fileId, preferredAccountId) {
       const metaRes = await drive.files.get({
         fileId,
         supportsAllDrives: true,
-        fields: 'id, name, mimeType, size, webViewLink',
+        fields: 'id, name, mimeType, size, webViewLink, modifiedTime',
       });
       if (metaRes.data && metaRes.data.id) {
         const result = {
@@ -185,16 +228,12 @@ async function findDriveForFile(userId, fileId, preferredAccountId) {
  * most room. Falls back to the first connected account when all quota lookups fail.
  */
 async function pickUploadAccount(userId, preferredAccountId) {
-  const accountsSnap = await db
-    .collection('users')
-    .doc(userId)
-    .collection('connectedAccounts')
-    .get();
+  const { docs: accountDocs } = await getUserAccounts(userId);
 
-  if (accountsSnap.empty) return null;
+  if (!accountDocs || accountDocs.length === 0) return null;
 
   if (preferredAccountId) {
-    for (const doc of accountsSnap.docs) {
+    for (const doc of accountDocs) {
       const data = doc.data();
       if (
         data.googleAccountId === preferredAccountId ||
@@ -208,7 +247,7 @@ async function pickUploadAccount(userId, preferredAccountId) {
 
   // Smart routing: pick the account with the most free storage
   const results = await Promise.allSettled(
-    accountsSnap.docs.map(async (doc) => {
+    accountDocs.map(async (doc) => {
       const account = doc.data();
       const drive = createOAuth2ClientForAccount(userId, doc);
       const aboutRes = await drive.about.get({
@@ -302,7 +341,7 @@ async function streamFile(req, res, { isDownload = false }) {
   try {
     const userId = req.userId;
     const { fileId } = req.params;
-    const { accountId } = req.query;
+    const { accountId, mimeType: queryMimeType, name: queryName, size: querySize } = req.query;
 
     if (!fileId) {
       return res.status(400).json({ error: 'Missing fileId parameter' });
@@ -318,11 +357,17 @@ async function streamFile(req, res, { isDownload = false }) {
         const buffer = cachedPdf.buffer;
         const total = buffer.length;
         const filename = cachedPdf.filename;
+        const etag = `"${fileId}-cached"`;
+
+        if (req.headers['if-none-match'] === etag) {
+          return res.status(304).end();
+        }
 
         res.setHeader('Content-Type', cachedPdf.mimeType || 'application/pdf');
         res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
-        res.setHeader('Cache-Control', 'private, max-age=86400');
+        res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=3600');
         res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('ETag', etag);
 
         const range = req.headers.range;
         if (range) {
@@ -343,7 +388,11 @@ async function streamFile(req, res, { isDownload = false }) {
       }
     }
 
-    const driveInfo = await findDriveForFile(userId, fileId, accountId);
+    const driveInfo = await findDriveForFile(userId, fileId, accountId, {
+      mimeType: queryMimeType,
+      name: queryName,
+      size: querySize,
+    });
     if (!driveInfo) {
       return res.status(404).json({ error: 'File not found or access denied' });
     }
@@ -353,6 +402,11 @@ async function streamFile(req, res, { isDownload = false }) {
     // Folders cannot be streamed or downloaded as a single file
     if (file.mimeType === 'application/vnd.google-apps.folder' || file.mimeType === 'folder') {
       return res.status(400).json({ error: 'Folders cannot be streamed or downloaded directly' });
+    }
+
+    const etag = `"${fileId}-${file.modifiedTime ? new Date(file.modifiedTime).getTime() : '1'}"`;
+    if (req.headers['if-none-match'] === etag) {
+      return res.status(304).end();
     }
 
     // 1. Google Workspace Document (Docs, Sheets, Slides, Drawings)
@@ -384,7 +438,7 @@ async function streamFile(req, res, { isDownload = false }) {
         { responseType: 'stream' }
       );
 
-      // Buffer Google Docs exported to PDF for instant subsequent page loading
+      // Buffer Google Docs exported to PDF while streaming immediately to the client
       if (exportMimeType === 'application/pdf') {
         let isAborted = false;
         req.on('close', () => {
@@ -394,12 +448,22 @@ async function streamFile(req, res, { isDownload = false }) {
           }
         });
 
+        res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
+        res.setHeader('Content-Type', exportMimeType);
+        res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=3600');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('ETag', etag);
+
         const chunks = [];
         exportRes.data.on('data', (c) => {
-          if (!isAborted) chunks.push(c);
+          if (!isAborted) {
+            chunks.push(c);
+            res.write(c);
+          }
         });
         exportRes.data.on('end', () => {
           if (isAborted) return;
+          res.end();
           const buffer = Buffer.concat(chunks);
           pdfBufferCache.set(fileId, {
             buffer,
@@ -408,13 +472,6 @@ async function streamFile(req, res, { isDownload = false }) {
             isGoogleApp: true,
             expiresAt: Date.now() + PDF_BUFFER_CACHE_TTL,
           });
-
-          res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
-          res.setHeader('Content-Type', exportMimeType);
-          res.setHeader('Content-Length', buffer.length);
-          res.setHeader('Cache-Control', 'private, max-age=86400');
-          res.setHeader('Accept-Ranges', 'bytes');
-          res.end(buffer);
         });
 
         exportRes.data.on('error', (err) => {
@@ -427,6 +484,8 @@ async function streamFile(req, res, { isDownload = false }) {
       // Non-PDF exports (docs docx, sheets xlsx, slides pptx, drawings png)
       res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
       res.setHeader('Content-Type', exportMimeType);
+      res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=3600');
+      res.setHeader('ETag', etag);
 
       req.on('close', () => {
         if (exportRes.data && typeof exportRes.data.destroy === 'function') {
@@ -444,11 +503,16 @@ async function streamFile(req, res, { isDownload = false }) {
 
     const filename = file.name || 'file';
 
-    // 2. Standard PDF file optimization: buffer in memory to eliminate preview lag
-    if (file.mimeType === 'application/pdf' && (!file.size || file.size <= 25 * 1024 * 1024)) {
+    // 2. Standard PDF file optimization: stream chunks immediately while caching
+    if (file.mimeType === 'application/pdf') {
+      const getOptions = { responseType: 'stream' };
+      if (req.headers.range) {
+        getOptions.headers = { Range: req.headers.range };
+      }
+
       const streamRes = await drive.files.get(
         { fileId, alt: 'media' },
-        { responseType: 'stream' }
+        getOptions
       );
 
       let isAborted = false;
@@ -459,50 +523,52 @@ async function streamFile(req, res, { isDownload = false }) {
         }
       });
 
-      const chunks = [];
-      streamRes.data.on('data', (c) => {
-        if (!isAborted) chunks.push(c);
-      });
-      streamRes.data.on('end', () => {
-        if (isAborted) return;
-        const buffer = Buffer.concat(chunks);
-        pdfBufferCache.set(fileId, {
-          buffer,
-          mimeType: 'application/pdf',
-          filename,
-          isGoogleApp: false,
-          expiresAt: Date.now() + PDF_BUFFER_CACHE_TTL,
-        });
+      res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=3600');
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('ETag', etag);
 
-        const total = buffer.length;
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
-        res.setHeader('Cache-Control', 'private, max-age=86400');
-        res.setHeader('Accept-Ranges', 'bytes');
+      if (streamRes.status === 206 || streamRes.headers?.['content-range']) {
+        res.status(206);
+        if (streamRes.headers['content-range']) res.setHeader('Content-Range', streamRes.headers['content-range']);
+        if (streamRes.headers['content-length']) res.setHeader('Content-Length', streamRes.headers['content-length']);
+        return streamRes.data.pipe(res);
+      }
 
-        const range = req.headers.range;
-        if (range) {
-          const parts = range.replace(/bytes=/, '').split('-');
-          const start = parseInt(parts[0], 10);
-          const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
-          if (start < total && end < total && start <= end) {
-            const chunksize = end - start + 1;
-            res.status(206);
-            res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-            res.setHeader('Content-Length', chunksize);
-            return res.end(buffer.subarray(start, end + 1));
+      if (file.size) {
+        res.setHeader('Content-Length', file.size);
+      }
+
+      const shouldCache = !file.size || file.size <= 25 * 1024 * 1024;
+      if (shouldCache) {
+        const chunks = [];
+        streamRes.data.on('data', (c) => {
+          if (!isAborted) {
+            chunks.push(c);
+            res.write(c);
           }
-        }
+        });
+        streamRes.data.on('end', () => {
+          if (isAborted) return;
+          res.end();
+          const buffer = Buffer.concat(chunks);
+          pdfBufferCache.set(fileId, {
+            buffer,
+            mimeType: 'application/pdf',
+            filename,
+            isGoogleApp: false,
+            expiresAt: Date.now() + PDF_BUFFER_CACHE_TTL,
+          });
+        });
+        streamRes.data.on('error', (err) => {
+          console.error('PDF buffer error:', err.message);
+          if (!res.headersSent) res.status(500).json({ error: 'Failed to load PDF' });
+        });
+        return;
+      }
 
-        res.setHeader('Content-Length', total);
-        res.end(buffer);
-      });
-
-      streamRes.data.on('error', (err) => {
-        console.error('PDF buffer error:', err.message);
-        if (!res.headersSent) res.status(500).json({ error: 'Failed to load PDF' });
-      });
-      return;
+      return streamRes.data.pipe(res);
     }
 
     // 3. Other standard binary files (images, videos, audio, text, zip, etc.)
@@ -518,7 +584,9 @@ async function streamFile(req, res, { isDownload = false }) {
 
     res.setHeader('Content-Disposition', formatContentDisposition(dispositionType, filename));
     res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
-    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=3600');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('ETag', etag);
 
     if (streamRes.status === 206 || streamRes.headers?.['content-range']) {
       res.status(206);
@@ -527,7 +595,6 @@ async function streamFile(req, res, { isDownload = false }) {
       if (streamRes.headers['content-length']) res.setHeader('Content-Length', streamRes.headers['content-length']);
     } else if (file.size) {
       res.setHeader('Content-Length', file.size);
-      res.setHeader('Accept-Ranges', 'bytes');
     }
 
     req.on('close', () => {
@@ -586,14 +653,10 @@ exports.getFiles = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // 2. Load all connected accounts
-    const accountsSnap = await db
-      .collection('users')
-      .doc(userId)
-      .collection('connectedAccounts')
-      .get();
+    // 2. Load all connected accounts (cached or from Firestore)
+    const { docs: accountDocs } = await getUserAccounts(userId);
 
-    if (accountsSnap.empty) {
+    if (!accountDocs || accountDocs.length === 0) {
       return res.json({ files: [], accounts: [] });
     }
 
@@ -604,7 +667,7 @@ exports.getFiles = async (req, res) => {
 
     // 3. Concurrently fetch files and storage quota for all connected accounts
     const accountResults = await Promise.allSettled(
-      accountsSnap.docs.map(async (accountDoc) => {
+      accountDocs.map(async (accountDoc) => {
         const account = accountDoc.data();
         let accountStorage = null;
         let driveFiles = [];
@@ -644,7 +707,25 @@ exports.getFiles = async (req, res) => {
               q: qQuery,
             })
             .then((response) => {
-              return (response.data.files || []).map((file) => ({
+              const files = response.data.files || [];
+              // Pre-warm fileInfoCache for instant 0ms preview lookups
+              for (const f of files) {
+                fileInfoCache.set(`${userId}:${f.id}`, {
+                  drive,
+                  file: {
+                    id: f.id,
+                    name: f.name,
+                    mimeType: f.mimeType,
+                    size: f.size ? parseInt(f.size, 10) : 0,
+                    webViewLink: f.webViewLink,
+                    modifiedTime: f.modifiedTime,
+                  },
+                  account: accountDoc.data(),
+                  expiresAt: Date.now() + FILE_INFO_CACHE_TTL,
+                });
+              }
+
+              return files.map((file) => ({
                 id: file.id,
                 name: file.name,
                 mimeType: file.mimeType,
@@ -1093,4 +1174,7 @@ exports.shareFile = async (req, res) => {
       .json({ error: 'Failed to share file' });
   }
 };
+
+exports.invalidateUserAccountsCache = invalidateUserAccountsCache;
+
 

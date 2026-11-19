@@ -10,6 +10,7 @@ const {
   SESSION_COOKIE_NAME,
 } = require('../middleware/session.middleware');
 const { encrypt } = require('../utils/encryption');
+const { invalidateUserAccountsCache } = require('./files.controller');
 
 const SCOPES = [
   'https://www.googleapis.com/auth/userinfo.profile',
@@ -323,6 +324,8 @@ exports.googleCallback = async (req, res) => {
       .collection('connectedAccounts')
       .doc(profile.id) // Google's account ID, unique per Google account
       .set(accountDocData, { merge: true });
+
+    invalidateUserAccountsCache(userId);
 
     // Issue signed 7-day session as HTTP-only cookie + pass in URL fragment for cross-domain support
     const sessionToken = setSessionCookie(res, userId);
